@@ -52,6 +52,10 @@
   .supcard .ci span{font-size:12px;color:var(--muted)}
   .pill{font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:20px;background:#0f1c15;color:var(--muted);border:1px solid var(--line)}
   .pill.go{color:var(--amber);border-color:#3a2e0e}.pill.done{color:var(--green-bright);border-color:var(--deep)}
+  .pill.recv{color:#7dd3fc;border-color:#0c4a6e;background:#08222e}
+  .supcard.novo{border-color:var(--green-bright);box-shadow:0 0 0 1px var(--green-bright) inset}
+  .badge-novo{display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--bg);background:var(--green-bright);padding:2px 7px;border-radius:5px;margin-right:6px}
+  .valbtn{font-size:11px;font-weight:800;padding:5px 11px;border:1px solid var(--green-bright);border-radius:8px;background:#0c2417;color:var(--green-bright);cursor:pointer;margin-left:6px}
   .addbtn{width:100%;background:transparent;border:1.5px dashed var(--accent);color:var(--green-bright);border-radius:12px;padding:13px;font-size:14px;font-weight:800;cursor:pointer;margin:0 0 8px}
 
   /* fornecedor / blocos */
@@ -92,6 +96,17 @@
   .modelobox{max-width:520px;width:100%;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
   .modeloh{font-weight:800;margin-bottom:10px}
   .modeloimg{min-height:80px;display:flex;align-items:center;justify-content:center}
+  .dossbox{max-width:560px;width:100%;max-height:86vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .dossh{display:flex;justify-content:space-between;align-items:center;font-size:16px;margin-bottom:6px;position:sticky;top:-16px;background:var(--panel);padding-top:4px}
+  .dossclose{cursor:pointer;color:var(--muted);font-size:18px;padding:0 6px}
+  .dosssec{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--green-bright);margin:14px 0 4px;border-top:1px solid var(--line);padding-top:10px}
+  .dossmeta{font-size:12.5px;color:var(--muted);margin-bottom:6px}
+  .dossblk{margin:6px 0}
+  .dossblkh{font-size:13px;font-weight:700}
+  .dossnota{font-size:12px;color:var(--muted);margin:2px 0}
+  .dossthumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:5px}
+  .dossthumb{width:74px;height:74px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer}
+  .dossdoc{display:inline-flex;align-items:center;justify-content:center;width:74px;height:74px;border-radius:8px;border:1px solid var(--line);font-size:11px;font-weight:800;color:var(--green-bright);text-decoration:none}
   .shoot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 7px}
   .shootbtn{display:inline-flex;align-items:center;gap:7px;background:#0a130e;border:1px solid var(--line);color:var(--ink);padding:10px 13px;border-radius:9px;font-size:13.5px;font-weight:700;cursor:pointer}
   .qmsg{font-size:12px;font-weight:700;margin:0 0 7px;padding:6px 9px;border-radius:7px;display:none}
@@ -348,7 +363,7 @@ function show(view){["vLogin","vList","vSup"].forEach(v=>$(v).classList.add("hid
 
 function syncBadge(){const on=navigator.onLine;const b=$("syncBadge");
   b.textContent=on?"online · sincroniza":"offline · salvo aqui";b.className="sync "+(on?"on":"off");}
-window.addEventListener("online",()=>{syncBadge();flushQueue();});
+window.addEventListener("online",()=>{syncBadge();flushQueue();pullFornecedores();});
 window.addEventListener("offline",syncBadge);
 
 /* =========================== lista de fornecedores =========================== */
@@ -356,14 +371,25 @@ function renderList(){
   const el=$("list");el.innerHTML="";
   const arr=Object.values(state.suppliers);
   if(!arr.length){el.innerHTML='<p class="hint">Nenhum fornecedor ainda. Cadastre o primeiro acima.</p>';return;}
+  arr.sort((a,b)=>(novoFlag(b)?1:0)-(novoFlag(a)?1:0));   // relatórios novos primeiro
   arr.forEach(s=>{
-    const done=blocosDoneForn(s)+ (s.itens||[]).filter(i=>itemDone(i)).length;
-    let pill='<span class="pill">não iniciado</span>';
-    if(s.status==="recebido")pill='<span class="pill done">enviado</span>';
+    const novo=novoFlag(s);
+    const done=blocosDoneForn(s)+(s.itens||[]).filter(i=>itemDone(i)).length;
+    let pill='<span class="pill">a visitar</span>';
+    if(s.status==="validado")pill='<span class="pill done">validado</span>';
+    else if(s.status==="recebido")pill='<span class="pill recv">relatório recebido</span>';
     else if(done>0)pill='<span class="pill go">em validação</span>';
-    const c=document.createElement("div");c.className="card supcard";
-    c.innerHTML=`<div class="pin">🏭</div><div class="ci"><b>${esc(s.nome)}</b><span>${esc(s.cidade||"—")} · ${(s.itens||[]).length} produto(s)</span></div>${pill}`;
-    c.onclick=()=>openSup(s.id);el.appendChild(c);});
+    const c=document.createElement("div");c.className="card supcard"+(novo?" novo":"");
+    const valBtn=(s.status==="recebido"&&!isAgente())?'<button class="valbtn" data-val>✓ validar</button>':"";
+    c.innerHTML=`<div class="pin">🏭</div><div class="ci"><b>${esc(s.nome)}</b><span>${esc(s.cidade||"—")} · ${(s.itens||[]).length} produto(s)</span></div>${novo?'<span class="badge-novo">novo</span>':''}${pill}${valBtn}`;
+    const vb=c.querySelector("[data-val]");if(vb)vb.addEventListener("click",ev=>{ev.stopPropagation();markValidado(s);});
+    c.onclick=()=>{
+      if(s.status==="recebido"||s.status==="validado"){
+        if(isAgente()){alert("Relatório finalizado.");return;}
+        verDossie(s);return;
+      }
+      openSup(s.id);
+    };el.appendChild(c);});
 }
 function campoDone(s,c){const st=s.forn&&s.forn[c.k];if(!st)return false;return c.tipo==="doc"?!!(st.media&&st.media.length):!!st.status;}
 function blocosDoneForn(s){return CAMPOS_FORN.filter(c=>campoDone(s,c)).length;}
@@ -377,17 +403,21 @@ $("nf_cancel").onclick=()=>$("mNew").classList.remove("show");
 $("nf_save").onclick=async()=>{
   const nome=$("nf_nome").value.trim();if(!nome){alert("Informe o nome.");return;}
   const id="loc_"+Date.now();
-  state.suppliers[id]={id,nome,cidade:$("nf_cidade").value.trim(),origem:(state.session.email||"").includes("aimportshop")?"agente":"selecta",
-    alvo:$("nf_alvo").value||null,status:"nao_iniciado",qual:{carater:"",exporta_brasil:null,homologado:null},forn:{},itens:[]};
+  const s={id,serverId:null,nome,cidade:$("nf_cidade").value.trim(),origem:(state.session.email||"").includes("aimportshop")?"agente":"selecta",
+    alvo:$("nf_alvo").value||null,status:"nao_iniciado",visto:true,qual:{carater:"",exporta_brasil:null,homologado:null},forn:{},itens:[]};
+  state.suppliers[id]=s;
   await saveState();$("mNew").classList.remove("show");
   ["nf_nome","nf_cidade"].forEach(i=>$(i).value="");renderList();
+  pushFornecedor(s).then(()=>renderList());   // sobe na hora; se estiver offline, sobe ao reconectar
 };
 
 /* =========================== tela do fornecedor =========================== */
 function openSup(id){current=state.suppliers[id];
+  if(novoFlag(current)){current.visto=true;saveState();}
   $("fName").textContent=current.nome;
   $("fMeta").textContent=(current.cidade||"—")+(current.origem==="agente"?" · sugestão do agente":"");
-  $("fAlvo").innerHTML="";
+  $("fAlvo").innerHTML=(current.remote&&current.status==="recebido")
+    ? '<span style="color:var(--muted)">Relatório enviado de outro aparelho — as evidências ficam no servidor, não neste dispositivo. A análise é feita por fora; aqui você marca validado na lista.</span>' : "";
   ensureAlvoItem(current);
   renderFornBlocos();renderItens();show("vSup");refreshProg();}
 /* o produto-alvo nasce na lista de validação (primeiro, com selo "alvo"); os demais entram depois */
@@ -770,24 +800,144 @@ $("doss_conf").onclick=async()=>{
 };
 
 /* =========================== sync (fetch REST + storage) =========================== */
+/* =========================== sincronização (lista compartilhada) =========================== */
+function authH(){if(!token&&state.session)token=state.session.token;
+  return {"apikey":SUPA_KEY,"Authorization":"Bearer "+token,"Content-Type":"application/json","Prefer":"return=representation"};}
+function novoFlag(s){return s.status==="recebido"&&!s.visto;}
+function isAgente(){return (((state.session&&state.session.email)||"")).includes("aimportshop");}
+
+// cria o fornecedor no servidor uma única vez (cadastro sobe na hora); guarda serverId
+async function pushFornecedor(s){
+  if(s.serverId)return s.serverId;
+  if(s.remote)return null;
+  if(!navigator.onLine)return null;
+  if(!token&&state.session)token=state.session.token; if(!token)return null;
+  try{
+    const r=await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor`,{method:"POST",headers:authH(),
+      body:JSON.stringify({nome:s.nome,cidade:s.cidade,origem:s.origem,observacao_alvo:s.alvo,status:s.status==="recebido"||s.status==="validado"?"nao_iniciado":(s.status||"nao_iniciado")})});
+    if(!r.ok)return null;
+    const f=(await r.json())[0]; s.serverId=f.id; await saveState(); return f.id;
+  }catch(e){console.warn("cadastro adiado",e);return null;}
+}
+
+// puxa a lista do servidor e mescla (servidor manda no status; local guarda as evidências)
+async function pullFornecedores(){
+  if(!navigator.onLine)return;
+  if(!token&&state.session)token=state.session.token; if(!token)return;
+  try{
+    const r=await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor?select=id,nome,cidade,origem,status,observacao_alvo&order=criado_em.desc`,{headers:authH()});
+    if(!r.ok)return;
+    const rows=await r.json(); let changed=false;
+    for(const f of rows){
+      let s=Object.values(state.suppliers).find(x=>x.serverId===f.id);
+      if(s){
+        if(s.status!==f.status){ if(f.status==="recebido"&&s.status!=="recebido")s.visto=false; s.status=f.status; changed=true; }
+      }else{
+        const lid="srv_"+f.id;
+        state.suppliers[lid]={id:lid,serverId:f.id,remote:true,nome:f.nome,cidade:f.cidade||"",origem:f.origem||"selecta",
+          alvo:f.observacao_alvo||null,status:f.status||"nao_iniciado",visto:(f.status!=="recebido"),
+          qual:{carater:"",exporta_brasil:null,homologado:null},forn:{},itens:[]};
+        if(state.suppliers[lid].alvo)ensureAlvoItem(state.suppliers[lid]);
+        changed=true;
+      }
+    }
+    if(changed){await saveState();renderList();}
+  }catch(e){console.warn("pull adiado",e);}
+}
+
+// Selecta marca o fornecedor como validado (depois de cruzar os dados por fora)
+async function markValidado(s){
+  s.status="validado";s.visto=true;await saveState();renderList();
+  const sid=await pushFornecedor(s);
+  if(sid&&navigator.onLine){try{await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,{method:"PATCH",headers:authH(),body:JSON.stringify({status:"validado"})});}catch(e){console.warn("validado adiado",e);}}
+}
+
+// ---------- VISUALIZADOR DE DOSSIÊ (lado Selecta) ----------
+function labelBlocoEmpresa(cod){const c=campoBy(cod);if(c)return c.label;if(cod==="ficha_tecnica")return "Ficha técnica";return cod;}
+function labelSlot(tipoItem,slotCod){if(slotCod==="ficha_tecnica")return "Ficha técnica";const c=catBy(tipoItem);const sl=c&&c.slots.find(x=>x.cod===slotCod);return sl?sl.label:slotCod;}
+function blocoDossHtml(label,b,mds,signed){
+  const thumbs=(mds||[]).map(m=>{const url=signed[m.storage_path];if(!url)return "";
+    if(m.tipo==="image")return `<img class="dossthumb" src="${url}" data-full="${url}">`;
+    return `<a class="dossdoc" href="${url}" target="_blank" rel="noopener">${m.tipo==="pdf"?"PDF":m.tipo==="video"?"VÍDEO":"DOC"}</a>`;
+  }).join("");
+  const st=b.status?` · ${STLBL[b.status]||b.status}`:"";
+  return `<div class="dossblk"><div class="dossblkh">${esc(label)}${st}</div>${b.nota?`<div class="dossnota">${esc(b.nota)}</div>`:""}<div class="dossthumbs">${thumbs||'<span class="hint">sem mídia</span>'}</div></div>`;
+}
+async function verDossie(s){
+  const ov=document.createElement("div");ov.className="modelov";
+  ov.innerHTML=`<div class="dossbox"><div class="dossh"><b>${esc(s.nome)}</b><span class="dossclose" data-x>✕</span></div><div class="dossbody" data-body><p class="hint">Carregando dossiê do servidor…</p></div></div>`;
+  ov.querySelector("[data-x]").onclick=()=>ov.remove();
+  ov.onclick=e=>{if(e.target===ov)ov.remove();};
+  document.body.appendChild(ov);
+  const body=ov.querySelector("[data-body]");
+  if(!navigator.onLine){body.innerHTML='<p class="hint">Sem internet. Conecte pra carregar o dossiê.</p>';return;}
+  try{
+    const H=authH();
+    const sid=s.serverId||await pushFornecedor(s);
+    if(!sid){body.innerHTML='<p class="hint">Não encontrei este fornecedor no servidor.</p>';return;}
+    const vr=await fetch(`${SUPA_URL}/rest/v1/agch_visita?fornecedor_id=eq.${sid}&select=id,recebido_em&order=recebido_em.desc&limit=1`,{headers:H});
+    const vs=await vr.json();
+    if(!vs.length){body.innerHTML='<p class="hint">Ainda não há relatório enviado para este fornecedor.</p>';return;}
+    const visitaId=vs[0].id;
+    const [brr,irr]=await Promise.all([
+      fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta?visita_id=eq.${visitaId}&select=id,nivel,bloco_codigo,status,nota,validacao_item_id`,{headers:H}),
+      fetch(`${SUPA_URL}/rest/v1/agch_validacao_item?visita_id=eq.${visitaId}&select=id,tipo_item,rotulo_item,is_alvo,moq,tem_amostra`,{headers:H})
+    ]);
+    const blocos=await brr.json(); const itens=await irr.json();
+    let midias=[];
+    if(blocos.length){
+      const ids=blocos.map(b=>b.id).join(",");
+      const mr=await fetch(`${SUPA_URL}/rest/v1/agch_midia?bloco_resposta_id=in.(${ids})&select=bloco_resposta_id,tipo,storage_path`,{headers:H});
+      midias=await mr.json();
+    }
+    const paths=[...new Set(midias.map(m=>m.storage_path).filter(Boolean))];
+    let signed={};
+    if(paths.length){
+      const sr=await fetch(`${SUPA_URL}/storage/v1/object/sign/agch-midias`,{method:"POST",headers:H,body:JSON.stringify({expiresIn:3600,paths})});
+      if(sr.ok){const arr=await sr.json();arr.forEach(o=>{if(o.signedURL)signed[o.path]=SUPA_URL+o.signedURL;});}
+    }
+    const mById={};midias.forEach(m=>{(mById[m.bloco_resposta_id]=mById[m.bloco_resposta_id]||[]).push(m);});
+    const html=[];
+    html.push('<div class="dosssec">EMPRESA</div>');
+    blocos.filter(b=>b.nivel==="fornecedor").forEach(b=>html.push(blocoDossHtml(labelBlocoEmpresa(b.bloco_codigo),b,mById[b.id],signed)));
+    itens.forEach(it=>{
+      const sn=it.tem_amostra===true?"Sim":it.tem_amostra===false?"Não":"—";
+      html.push(`<div class="dosssec">${esc(it.rotulo_item||it.tipo_item)}${it.is_alvo?' · ALVO':''}</div>`);
+      html.push(`<div class="dossmeta">MOQ: ${it.moq!=null?it.moq+" un":"—"} · Amostra: ${sn}</div>`);
+      blocos.filter(b=>b.nivel==="item"&&b.validacao_item_id===it.id).forEach(b=>html.push(blocoDossHtml(labelSlot(it.tipo_item,b.bloco_codigo),b,mById[b.id],signed)));
+    });
+    body.innerHTML=html.join("")||'<p class="hint">Dossiê vazio.</p>';
+    body.querySelectorAll("[data-full]").forEach(img=>img.onclick=()=>showModelo(img.dataset.full,""));
+  }catch(e){console.warn("dossiê erro",e);body.innerHTML='<p class="hint">Erro ao carregar. Tente novamente.</p>';}
+}
+
+// atualização automática enquanto o app está aberto e visível
+let pollTimer=null;
+function startPolling(){
+  if(pollTimer)clearInterval(pollTimer);
+  pollTimer=setInterval(()=>{if(!document.hidden&&navigator.onLine){pullFornecedores();flushQueue();}},20000);
+}
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&navigator.onLine)pullFornecedores();});
+
 async function flushQueue(){
   if(!token&&state.session)token=state.session.token;
-  if(!token)return;
-  const H={"apikey":SUPA_KEY,"Authorization":"Bearer "+token,"Content-Type":"application/json","Prefer":"return=representation"};
+  if(!token||!navigator.onLine)return;
+  const H=authH();
   for(const s of Object.values(state.suppliers)){
-    if(!s.pendingSync)continue;
+    if(s.remote)continue;                 // veio do servidor; nada a enviar daqui
+    const sid=await pushFornecedor(s);     // garante que o fornecedor existe no servidor (cadastro)
+    if(!s.pendingSync)continue;            // só envia o dossiê de quem gravou+confirmou
+    if(!sid)continue;                      // ainda sem internet; tenta na próxima
     try{
-      // 1. fornecedor (com qualificadores estruturados)
       const q=s.qual||{};
-      let fr=await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor`,{method:"POST",headers:H,
-        body:JSON.stringify({nome:s.nome,cidade:s.cidade,origem:s.origem,observacao_alvo:s.alvo,status:"recebido",
-          carater:q.carater||null,
+      // 1. atualiza o fornecedor que já existe (NÃO recria) + status recebido
+      await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,{method:"PATCH",headers:H,
+        body:JSON.stringify({carater:q.carater||null,
           exporta_brasil:(q.exporta_brasil===undefined?null:q.exporta_brasil),
-          homologado_brasil:(q.homologado===undefined?null:q.homologado)})});
-      const forn=(await fr.json())[0];
+          homologado_brasil:(q.homologado===undefined?null:q.homologado),status:"recebido"})});
       // 2. visita
       let vr=await fetch(`${SUPA_URL}/rest/v1/agch_visita`,{method:"POST",headers:H,
-        body:JSON.stringify({fornecedor_id:forn.id,agente:state.session.email,status:"recebida",recebido_em:new Date().toISOString()})});
+        body:JSON.stringify({fornecedor_id:sid,agente:state.session.email,status:"recebida",recebido_em:new Date().toISOString()})});
       const visita=(await vr.json())[0];
       // 3. campos de mídia da empresa (cada campo = um bloco_resposta) + uploads
       for(const c of CAMPOS_FORN){const st=s.forn[c.k];if(!st||(!st.status&&!(st.media&&st.media.length)))continue;
@@ -832,12 +982,12 @@ function esc(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":
 /* =========================== boot =========================== */
 $("li_btn").onclick=async()=>{
   $("li_err").textContent="";
-  try{await doLogin($("li_email").value.trim(),$("li_pass").value);renderList();show("vList");flushQueue();}
+  try{await doLogin($("li_email").value.trim(),$("li_pass").value);renderList();show("vList");flushQueue();pullFornecedores();startPolling();}
   catch(e){$("li_err").textContent=e.message;}
 };
 (async function(){
   await openDB();await loadState();syncBadge();
-  if(state.session&&state.session.token){token=state.session.token;renderList();show("vList");if(navigator.onLine)flushQueue();}
+  if(state.session&&state.session.token){token=state.session.token;renderList();show("vList");if(navigator.onLine){flushQueue();pullFornecedores();}startPolling();}
   else show("vLogin");
 })();
 </script>

@@ -79,6 +79,12 @@
   .slot:first-of-type{border-top:none}
   .slotlabel{font-size:13.5px;font-weight:700;margin:0 0 7px;display:flex;align-items:center;gap:6px}
   .star{color:var(--green-bright)}
+  .qrow{border-top:1px solid var(--line);padding:11px 0}
+  .qrow:first-child{border-top:none}
+  .qlabel{font-size:13.5px;font-weight:700;margin:0 0 8px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{padding:9px 16px;border:1.5px solid var(--line);border-radius:9px;background:#0a130e;font-size:13px;font-weight:700;cursor:pointer;color:var(--muted)}
+  .chip.on{border-color:var(--green-bright);color:var(--green-bright);background:#0c2417}
   .shoot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 7px}
   .shootbtn{display:inline-flex;align-items:center;gap:7px;background:#0a130e;border:1px solid var(--line);color:var(--ink);padding:10px 13px;border-radius:9px;font-size:13.5px;font-weight:700;cursor:pointer}
   .qmsg{font-size:12px;font-weight:700;margin:0 0 7px;padding:6px 9px;border-radius:7px;display:none}
@@ -203,24 +209,28 @@
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
 
-/* ---------- blocos da FÁBRICA (uma vez por fornecedor) ---------- */
-const BLOCOS_FORN = [
-  {cod:"identidade", t:"Identidade da fábrica",
-   ask:"O nome na placa bate com o registrado? Endereço confere?", zh:"招牌上的名称与营业执照一致吗？地址对吗？",
-   cap:"Fachada com placa + foto da business license (营业执照)."},
-  {cod:"classificacao", t:"Classificação",
-   ask:"Tem linha de produção rodando agora, ou é trading/escritório?", zh:"现在有生产线在运行吗？还是贸易公司？",
-   cap:"Vídeo da linha. Registre na nota: indústria local / indústria exportadora / trading."},
-  {cod:"capacidade", t:"Capacidade real",
-   ask:"Máquinas, equipe e estoque condizem com o volume prometido?", zh:"设备、员工和库存与承诺的产量相符吗？",
-   cap:"Fotos do chão de fábrica, equipe e estoque."},
-  {cod:"qc", t:"Controle de qualidade",
-   ask:"Existe bancada de teste? Como testam antes de embalar?", zh:"有质检台吗？包装前怎么测试？",
-   cap:"Vídeo curto do processo de QC."},
-  {cod:"export", t:"Export e documentação",
-   ask:"Já exporta? Tem experiência com invoice / packing list?", zh:"已经出口了吗？有发票和装箱单经验吗？",
-   cap:"Anote. Se nunca exportou, registre."}
+/* ---------- EMPRESA — campos de MÍDIA (cada um vira um bloco_resposta no sync) ----------
+   k = código  ·  bloco = a qual bloco visual pertence  ·  tipo foto|doc  ·  crit = alta-res
+   dependeDe = só aparece se o sim/não indicado for "sim" */
+const CAMPOS_FORN = [
+  {k:"id_fachada",      bloco:"identidade", tipo:"foto", label:"Fachada da fábrica",          zh:"工厂门面（招牌+地址）", crit:false},
+  {k:"id_license",      bloco:"identidade", tipo:"doc",  label:"Business license (营业执照)",   zh:"营业执照", crit:false, obrig:true},
+  {k:"op_linha",        bloco:"operacao",   tipo:"foto", label:"Linha de produção rodando",    zh:"生产线在运行", crit:false},
+  {k:"op_qc",           bloco:"operacao",   tipo:"foto", label:"Bancada de teste / qualidade", zh:"质检台", crit:false},
+  {k:"op_estoque",      bloco:"operacao",   tipo:"foto", label:"Estoque",                      zh:"库存 / 仓库", crit:false},
+  {k:"exp_homolog_doc", bloco:"export",     tipo:"doc",  label:"Documento de homologação",     zh:"认证文件", crit:false, dependeDe:"homologado"},
+  {k:"co_tabela",       bloco:"comercial",  tipo:"doc",  label:"Tabela de preço atualizada",   zh:"最新报价单", crit:false},
 ];
+/* ---------- EMPRESA — blocos VISUAIS (agrupam os campos acima + extras) ---------- */
+const BLOCOS_FORN_UI = [
+  {cod:"identidade", t:"Identidade & documentação"},
+  {cod:"operacao",   t:"Operação", carater:true, outros:true},
+  {cod:"export",     t:"Exportação & Brasil",
+     simnao:[{k:"exporta_brasil",label:"Exporta para o Brasil?"},{k:"homologado",label:"Tem produto homologado no Brasil?"}]},
+  {cod:"comercial",  t:"Tabela de preço"},
+];
+const campoBy   = k   => CAMPOS_FORN.find(c=>c.k===k);
+const camposDoBloco = cod => CAMPOS_FORN.filter(c=>c.bloco===cod);
 
 /* ---------- catálogo dos 28 produtos com slots (★ crítico / ○ padrão) ---------- */
 /* Derivado do mapa de validação técnica. spec = referência curta; ref = foto ilustrativa (Selecta pluga). */
@@ -302,11 +312,15 @@ function mediaSet(id,blob){return new Promise(r=>{const t=idb.transaction("media
 function mediaGet(id){return new Promise(r=>{const t=idb.transaction("media").objectStore("media").get(id);t.onsuccess=()=>r(t.result||null);t.onerror=()=>r(null);});}
 
 /* =========================== estado =========================== */
-let state={session:null, suppliers:{}};  // suppliers[id] = {id,nome,cidade,origem,alvo,status, forn:{bloco:{status,note,media:[]}}, itens:[{vid,tipo,rotulo,is_alvo,blocos:{slot:{status,note,media:[]}}}]}
+const STATE_V=2; // bump = limpa fornecedores locais de versão antiga (a estrutura mudou)
+let state={v:STATE_V, session:null, suppliers:{}};  // suppliers[id]={id,nome,cidade,origem,alvo,status, qual:{carater,exporta_brasil,homologado}, forn:{campoK:{status,note,media:[]}}, itens:[...]}
 let token=null, current=null;
 
 async function saveState(){await kvSet("state",state);}
-async function loadState(){const s=await kvGet("state");if(s)state=s;}
+async function loadState(){const s=await kvGet("state");
+  if(s){ if(s.v!==STATE_V){ state={v:STATE_V, session:s.session||null, suppliers:{}}; await saveState(); } else { state=s; } }
+}
+function ensureQual(s){ if(!s.qual)s.qual={carater:"",exporta_brasil:null,homologado:null}; }
 
 /* =========================== auth (fetch) =========================== */
 async function doLogin(email,pass){
@@ -344,7 +358,8 @@ function renderList(){
     c.innerHTML=`<div class="pin">🏭</div><div class="ci"><b>${esc(s.nome)}</b><span>${esc(s.cidade||"—")} · ${(s.itens||[]).length} produto(s)</span></div>${pill}`;
     c.onclick=()=>openSup(s.id);el.appendChild(c);});
 }
-function blocosDoneForn(s){return BLOCOS_FORN.filter(b=>s.forn[b.cod]&&s.forn[b.cod].status).length;}
+function campoDone(s,c){const st=s.forn&&s.forn[c.k];if(!st)return false;return c.tipo==="doc"?!!(st.media&&st.media.length):!!st.status;}
+function blocosDoneForn(s){return CAMPOS_FORN.filter(c=>campoDone(s,c)).length;}
 function itemDone(i){return Object.values(i.blocos).some(b=>b.status);}
 
 /* novo fornecedor */
@@ -356,7 +371,7 @@ $("nf_save").onclick=async()=>{
   const nome=$("nf_nome").value.trim();if(!nome){alert("Informe o nome.");return;}
   const id="loc_"+Date.now();
   state.suppliers[id]={id,nome,cidade:$("nf_cidade").value.trim(),origem:(state.session.email||"").includes("aimportshop")?"agente":"selecta",
-    alvo:$("nf_alvo").value||null,status:"nao_iniciado",forn:{},itens:[]};
+    alvo:$("nf_alvo").value||null,status:"nao_iniciado",qual:{carater:"",exporta_brasil:null,homologado:null},forn:{},itens:[]};
   await saveState();$("mNew").classList.remove("show");
   ["nf_nome","nf_cidade"].forEach(i=>$(i).value="");renderList();
 };
@@ -371,13 +386,93 @@ function openSup(id){current=state.suppliers[id];
 $("btnBack").onclick=()=>{renderList();show("vList");};
 
 function renderFornBlocos(){
+  ensureQual(current);
   const el=$("fornBlocos");el.innerHTML="";
-  BLOCOS_FORN.forEach((b,idx)=>{
-    if(!current.forn[b.cod])current.forn[b.cod]={status:"",note:"",media:[]};
-    const st=current.forn[b.cod];
-    el.appendChild(blocoEl(idx+1,b.t,null,b.ask,b.zh,b.cap,
-      [{cod:"_",label:"Evidência",crit:false}], st, "forn:"+b.cod, st));
+  BLOCOS_FORN_UI.forEach((b,idx)=>el.appendChild(blocoFornEl(idx+1,b)));
+}
+/* bloco visual da empresa: header colapsável + corpo (campos + extras) */
+function blocoFornEl(num,b){
+  const sec=document.createElement("section");sec.className="step";
+  sec.innerHTML=`<div class="shead" data-tog><div class="num">${num}</div>
+    <div class="stit"><b>${b.t}</b></div><div class="chev">▶</div></div>
+    <div class="sbody" data-body></div>`;
+  sec.querySelector("[data-tog]").onclick=()=>sec.classList.toggle("open");
+  renderBlocoBody(sec,b);
+  return sec;
+}
+function renderBlocoBody(sec,b){
+  const body=sec.querySelector("[data-body]");body.innerHTML="";
+  if(b.carater) body.appendChild(caraterEl());
+  if(b.simnao)  b.simnao.forEach(q=>body.appendChild(simNaoEl(q,sec,b)));
+  camposDoBloco(b.cod).forEach(c=>{
+    if(c.dependeDe && current.qual[c.dependeDe]!==true) return; // campo condicional
+    if(!current.forn[c.k])current.forn[c.k]={status:"",note:"",media:[]};
+    body.appendChild(c.tipo==="doc"?campoDocEl(c):campoFotoEl(c));
   });
+  if(b.outros) body.appendChild(outrosItensEl());
+  const visiveis=camposDoBloco(b.cod).filter(c=>!c.dependeDe||current.qual[c.dependeDe]===true);
+  sec.classList.toggle("done", visiveis.length>0 && visiveis.every(c=>campoDone(current,c)));
+}
+/* campo FOTO: foto-modelo (placeholder) + captura validada + status ternário */
+function campoFotoEl(c){
+  const st=current.forn[c.k];
+  const div=document.createElement("div");div.className="slot";
+  div.innerHTML=`<div class="slotlabel">${c.crit?'<span class="star">★</span>':'○'} ${c.label}${c.zh?`<div class="zh">${c.zh}</div>`:''}</div>`;
+  div.appendChild(captureUI(st,c.label,c.crit,false));
+  const sr=document.createElement("div");sr.className="statusrow";
+  sr.innerHTML=`<button class="sbtn" data-s="ok">OK</button><button class="sbtn" data-s="warn">Atenção</button><button class="sbtn" data-s="bad">Reprova</button>`;
+  div.appendChild(sr);
+  const lock=document.createElement("div");lock.className="lock";lock.textContent='⚠ "OK" só com evidência válida.';div.appendChild(lock);
+  const note=document.createElement("textarea");note.className="note";note.placeholder="Observação...";note.value=st.note||"";
+  note.oninput=()=>{st.note=note.value;saveState();};div.appendChild(note);
+  sr.querySelectorAll(".sbtn").forEach(btn=>{
+    if(btn.dataset.s===st.status)btn.classList.add("on");
+    btn.onclick=()=>{const wantOk=btn.dataset.s==="ok";const hasValid=st.media.some(m=>m.valid!==false);
+      if(wantOk&&!hasValid){lock.classList.add("show");return;}
+      lock.classList.remove("show");sr.querySelectorAll(".sbtn").forEach(x=>x.classList.remove("on"));
+      btn.classList.add("on");st.status=btn.dataset.s;saveState();refreshProg();};
+  });
+  return div;
+}
+/* campo DOCUMENTO: anexo de qualquer arquivo (sem status, sem validação de nitidez) */
+function campoDocEl(c){
+  const st=current.forn[c.k];
+  const div=document.createElement("div");div.className="slot";
+  div.innerHTML=`<div class="slotlabel">📎 ${c.label}${c.obrig?' <span style="color:var(--amber)">(obrigatório)</span>':''}${c.zh?`<div class="zh">${c.zh}</div>`:''}</div>
+    <div class="hint" style="margin:2px 0 6px">Aceita PDF, Excel, Word, imagem. Pode anexar agora ou depois.</div>`;
+  div.appendChild(captureUI(st,c.label,false,true));
+  return div;
+}
+/* caráter da empresa: Fábrica / Trading (vai pro fornecedor estruturado) */
+function caraterEl(){
+  const div=document.createElement("div");div.className="qrow";
+  div.innerHTML=`<div class="qlabel">Caráter da empresa</div><div class="chips" data-c></div>`;
+  const box=div.querySelector("[data-c]");
+  [["fabrica","Fábrica"],["trading","Trading"]].forEach(([v,t])=>{
+    const b=document.createElement("button");b.className="chip"+(current.qual.carater===v?" on":"");b.textContent=t;
+    b.onclick=()=>{current.qual.carater=v;box.querySelectorAll(".chip").forEach(x=>x.classList.remove("on"));b.classList.add("on");saveState();};
+    box.appendChild(b);});
+  return div;
+}
+/* sim/não estruturado (export/homologado) — re-renderiza o bloco p/ mostrar campo condicional */
+function simNaoEl(q,sec,b){
+  const div=document.createElement("div");div.className="qrow";
+  div.innerHTML=`<div class="qlabel">${q.label}</div><div class="chips" data-c></div>`;
+  const box=div.querySelector("[data-c]");
+  [[true,"Sim"],[false,"Não"]].forEach(([v,t])=>{
+    const bt=document.createElement("button");bt.className="chip"+(current.qual[q.k]===v?" on":"");bt.textContent=t;
+    bt.onclick=()=>{current.qual[q.k]=v;saveState();renderBlocoBody(sec,b);};
+    box.appendChild(bt);});
+  return div;
+}
+/* gatilho "outros itens": abre o mesmo seletor de produtos; entram pra validar na visita */
+function outrosItensEl(){
+  const div=document.createElement("div");div.className="qrow";
+  div.innerHTML=`<div class="qlabel">Fabrica/revende outros itens além do alvo?</div>
+    <button class="chip" data-add>+ Adicionar itens</button>
+    <div class="hint" style="margin-top:6px">Os itens escolhidos entram na lista de produtos pra validar nesta mesma visita.</div>`;
+  div.querySelector("[data-add]").onclick=()=>{renderItemPicker("");$("it_busca").value="";$("mItem").classList.add("show");};
+  return div;
 }
 function renderItens(){
   const el=$("itensVal");el.innerHTML="";
@@ -462,20 +557,22 @@ function wireStatus(el,st,reqEvid){
 }
 
 /* =========================== captura + validação técnica =========================== */
-function captureUI(st,label,crit){
+function captureUI(st,label,crit,isDoc){
   const box=document.createElement("div");
-  box.innerHTML=`<div class="shoot"><button class="shootbtn">📷 Foto / vídeo</button><span class="zh" data-cnt></span></div>
+  box.innerHTML=`<div class="shoot"><button class="shootbtn">${isDoc?"📎 Anexar arquivo":"📷 Foto / vídeo"}</button><span class="zh" data-cnt></span></div>
     <div class="qmsg" data-q></div><div class="thumbs" data-th></div>`;
-  const file=document.createElement("input");file.type="file";file.accept="image/*,video/*,application/pdf";
-  file.capture="environment";file.multiple=true;file.style.display="none";box.appendChild(file);
+  const file=document.createElement("input");file.type="file";
+  if(isDoc){file.accept="";}else{file.accept="image/*,video/*,application/pdf";file.capture="environment";}
+  file.multiple=true;file.style.display="none";box.appendChild(file);
   box.querySelector(".shootbtn").onclick=()=>file.click();
-  file.onchange=()=>handleFiles(file.files,st,box,crit);
+  file.onchange=()=>handleFiles(file.files,st,box,crit,isDoc);
   drawThumbs(box,st);
   return box;
 }
-function handleFiles(files,st,box,crit){
+function handleFiles(files,st,box,crit,isDoc){
   [...files].forEach(f=>{
-    if(f.type.startsWith("image")){
+    const isImg=f.type.startsWith("image");
+    if(isImg && !isDoc){
       processImage(f,crit,(blob,meta)=>{
         const id="m_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
         mediaSet(id,blob);st.media.push({id,name:f.name,type:"image",valid:meta.ok,reason:meta.reason,metric:meta.metric,w:meta.w,h:meta.h});
@@ -483,7 +580,8 @@ function handleFiles(files,st,box,crit){
       });
     }else{
       const id="m_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
-      mediaSet(id,f);st.media.push({id,name:f.name,type:f.type.includes("pdf")?"pdf":"video",valid:true,reason:"anexo"});
+      const tp=isImg?"image":(f.type.includes("pdf")?"pdf":(f.type.includes("video")?"video":"documento"));
+      mediaSet(id,f);st.media.push({id,name:f.name,type:tp,valid:true,reason:"anexo"});
       saveState();drawThumbs(box,st);refreshProg();
     }
   });
@@ -520,7 +618,7 @@ async function drawThumbs(box,st){
   for(let i=0;i<st.media.length;i++){const m=st.media[i];const div=document.createElement("div");div.className="th"+(m.valid===false?" ruim":"");
     if(m.type==="image"){const blob=await mediaGet(m.id);const u=blob?URL.createObjectURL(blob):"";
       div.innerHTML=`<img src="${u}">`+(m.valid===false?'<div class="flag">REFAZER</div>':'');}
-    else div.innerHTML=`<div class="th"><div style="width:56px;height:56px;border-radius:7px;border:2px solid var(--ok);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:var(--muted)">${m.type==="pdf"?"PDF":"VÍDEO"}</div></div>`;
+    else{const tag=m.type==="pdf"?"PDF":(m.type==="video"?"VÍDEO":"DOC");div.innerHTML=`<div class="th"><div style="width:56px;height:56px;border-radius:7px;border:2px solid var(--ok);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:var(--muted)">${tag}</div></div>`;}
     div.title="toque para remover";div.onclick=()=>{if(confirm("Remover esta mídia?")){st.media.splice(i,1);saveState();drawThumbs(box,st);refreshProg();}};
     wrap.appendChild(div);}
   const v=st.media.filter(m=>m.valid!==false).length;cnt.textContent=st.media.length?`${v} válida(s)/${st.media.length}`:"";
@@ -542,34 +640,49 @@ function renderItemPicker(f){const el=$("it_lista");f=f.toLowerCase();el.innerHT
 
 /* progresso */
 function refreshProg(){if(!current){$("progfill").style.width="0";return;}
-  let tot=BLOCOS_FORN.length,done=blocosDoneForn(current);
-  (current.itens||[]).forEach(it=>{const c=catBy(it.tipo);c.slots.forEach(sl=>{tot++;if(it.blocos[sl.cod]&&it.blocos[sl.cod].status)done++;});});
+  let tot=CAMPOS_FORN.length,done=blocosDoneForn(current);
+  (current.itens||[]).forEach(it=>{const c=catBy(it.tipo);if(!c)return;c.slots.forEach(sl=>{tot++;if(it.blocos[sl.cod]&&it.blocos[sl.cod].status)done++;});});
   $("progfill").style.width=(tot?done/tot*100:0)+"%";}
 
 /* =========================== gravar / dossiê =========================== */
 function buildData(){
-  return {schema:"agch.v1",fornecedor:{nome:current.nome,cidade:current.cidade,origem:current.origem,alvo:current.alvo},
+  ensureQual(current);
+  return {schema:"agch.v2",fornecedor:{nome:current.nome,cidade:current.cidade,origem:current.origem,alvo:current.alvo,
+      carater:current.qual.carater||null,exporta_brasil:current.qual.exporta_brasil,homologado_brasil:current.qual.homologado},
     gerado_em:new Date().toISOString(),
-    fabrica:BLOCOS_FORN.map(b=>({cod:b.cod,titulo:b.t,status:current.forn[b.cod]?.status||null,nota:current.forn[b.cod]?.note||null,midias:(current.forn[b.cod]?.media||[]).length})),
-    itens:(current.itens||[]).map(it=>({tipo:it.tipo,rotulo:it.rotulo,alvo:it.is_alvo,
-      slots:catBy(it.tipo).slots.map(sl=>({cod:sl.cod,label:sl.label,critico:sl.crit,status:it.blocos[sl.cod]?.status||null,nota:it.blocos[sl.cod]?.note||null,midias:(it.blocos[sl.cod]?.media||[]).map(m=>({tipo:m.type,valida:m.valid!==false}))}))}))};
+    empresa:CAMPOS_FORN.map(c=>({campo:c.k,label:c.label,tipo:c.tipo,status:current.forn[c.k]?.status||null,nota:current.forn[c.k]?.note||null,midias:(current.forn[c.k]?.media||[]).length})),
+    itens:(current.itens||[]).map(it=>{const c=catBy(it.tipo);return {tipo:it.tipo,rotulo:it.rotulo,alvo:it.is_alvo,
+      slots:(c?c.slots:[]).map(sl=>({cod:sl.cod,label:sl.label,critico:sl.crit,status:it.blocos[sl.cod]?.status||null,nota:it.blocos[sl.cod]?.note||null,midias:(it.blocos[sl.cod]?.media||[]).map(m=>({tipo:m.type,valida:m.valid!==false}))}))};})};
 }
 function pendencias(){
-  const p=[];BLOCOS_FORN.forEach(b=>{if(!current.forn[b.cod]?.status)p.push("Fábrica: "+b.t);});
-  if(current.alvo){const has=(current.itens||[]).some(i=>i.tipo===current.alvo);if(!has)p.push("⚠ PRODUTO-ALVO ("+catBy(current.alvo).nome+") ainda não validado");}
-  (current.itens||[]).forEach(it=>{const c=catBy(it.tipo);c.slots.filter(s=>s.crit).forEach(sl=>{
-    const st=it.blocos[sl.cod];if(!st||!st.status)p.push(it.rotulo+": slot ★ "+sl.label.split(":")[0]);});});
+  ensureQual(current);
+  const p=[];
+  CAMPOS_FORN.forEach(c=>{
+    if(c.dependeDe && current.qual[c.dependeDe]!==true) return;
+    const st=current.forn[c.k];
+    if(c.tipo==="foto"){ if(!st||!st.status) p.push("Empresa: "+c.label); }
+    else if(c.obrig){ if(!st||!(st.media&&st.media.length)) p.push("Empresa: "+c.label+" (documento)"); }
+  });
+  if(!current.qual.carater) p.push("Empresa: definir Fábrica/Trading");
+  if(current.alvo){const has=(current.itens||[]).some(i=>i.tipo===current.alvo);if(!has&&catBy(current.alvo))p.push("⚠ PRODUTO-ALVO ("+catBy(current.alvo).nome+") ainda não validado");}
+  (current.itens||[]).forEach(it=>{const c=catBy(it.tipo);if(!c)return;c.slots.filter(s=>s.crit).forEach(sl=>{
+    const st=it.blocos[sl.cod];if(!st||!st.status)p.push(it.rotulo+": ★ "+sl.label.split(":")[0]);});});
   return p;
 }
 function buildReport(){const d=buildData();const L=[];
   L.push("DOSSIÊ DE CAMPO — SELECTA (evidência, sem veredicto)");L.push("──────────────────────");
-  L.push("Fábrica : "+d.fornecedor.nome+(d.fornecedor.origem==="agente"?" [sugestão]":""));
+  L.push("Empresa : "+d.fornecedor.nome+(d.fornecedor.origem==="agente"?" [sugestão]":""));
   L.push("Cidade  : "+(d.fornecedor.cidade||"—"));
-  L.push("Alvo    : "+(d.fornecedor.alvo?catBy(d.fornecedor.alvo).nome:"—"));L.push("");
-  L.push("A FÁBRICA");d.fabrica.forEach(b=>L.push(` ${b.titulo}: [${b.status?STLBL[b.status].toUpperCase():"PENDENTE"}]${b.nota?" — "+b.nota:""}`));
+  L.push("Caráter : "+(d.fornecedor.carater||"—"));
+  const sn=v=>v===true?"Sim":(v===false?"Não":"—");
+  L.push("Exporta BR: "+sn(d.fornecedor.exporta_brasil)+"  ·  Homologado BR: "+sn(d.fornecedor.homologado_brasil));
+  L.push("Alvo    : "+(d.fornecedor.alvo&&catBy(d.fornecedor.alvo)?catBy(d.fornecedor.alvo).nome:"—"));L.push("");
+  L.push("A EMPRESA");
+  d.empresa.forEach(b=>{const lab=b.tipo==="doc"?`${b.midias} arquivo(s)`:(b.status?STLBL[b.status].toUpperCase():"PENDENTE");
+    L.push(` ${b.label}: [${lab}]${b.nota?" — "+b.nota:""}`);});
   L.push("");L.push("PRODUTOS");
   d.itens.forEach(it=>{L.push(` • ${it.rotulo}${it.alvo?" (ALVO)":""}`);
-    it.slots.forEach(s=>L.push(`   ${s.critico?"★":"○"} ${s.label.split(":")[0]}: [${s.status?STLBL[s.status].toUpperCase():"PENDENTE"}] ${s.midias.filter(m=>m.valida).length} foto(s)`));});
+    it.slots.forEach(s=>L.push(`   ${s.critico?"★":"○"} ${s.label.split(":")[0]}: [${s.status?STLBL[s.status].toUpperCase():"PENDENTE"}] ${s.midias.filter(m=>m.valida).length} mídia(s)`));});
   L.push("");L.push("Gerado "+new Date().toLocaleString("pt-BR"));return L.join("\n");}
 
 $("btnGravar").onclick=()=>{
@@ -596,19 +709,23 @@ async function flushQueue(){
   for(const s of Object.values(state.suppliers)){
     if(!s.pendingSync)continue;
     try{
-      // 1. fornecedor
+      // 1. fornecedor (com qualificadores estruturados)
+      const q=s.qual||{};
       let fr=await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor`,{method:"POST",headers:H,
-        body:JSON.stringify({nome:s.nome,cidade:s.cidade,origem:s.origem,observacao_alvo:s.alvo,status:"recebido"})});
+        body:JSON.stringify({nome:s.nome,cidade:s.cidade,origem:s.origem,observacao_alvo:s.alvo,status:"recebido",
+          carater:q.carater||null,
+          exporta_brasil:(q.exporta_brasil===undefined?null:q.exporta_brasil),
+          homologado_brasil:(q.homologado===undefined?null:q.homologado)})});
       const forn=(await fr.json())[0];
       // 2. visita
       let vr=await fetch(`${SUPA_URL}/rest/v1/agch_visita`,{method:"POST",headers:H,
         body:JSON.stringify({fornecedor_id:forn.id,agente:state.session.email,status:"recebida",recebido_em:new Date().toISOString()})});
       const visita=(await vr.json())[0];
-      // 3. blocos da fábrica + mídias
-      for(const b of BLOCOS_FORN){const st=s.forn[b.cod];if(!st||!st.status&&!st.media.length)continue;
+      // 3. campos de mídia da empresa (cada campo = um bloco_resposta) + uploads
+      for(const c of CAMPOS_FORN){const st=s.forn[c.k];if(!st||(!st.status&&!(st.media&&st.media.length)))continue;
         const br=await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
-          body:JSON.stringify({visita_id:visita.id,nivel:"fornecedor",bloco_codigo:b.cod,status:st.status||null,nota:st.note||null})});
-        const bloco=(await br.json())[0];await uploadMedias(st.media,bloco.id,visita.id,H);}
+          body:JSON.stringify({visita_id:visita.id,nivel:"fornecedor",bloco_codigo:c.k,status:st.status||null,nota:st.note||null})});
+        const bloco=(await br.json())[0];await uploadMedias(st.media,bloco.id,visita.id,H,c.k);}
       // 4. itens + slots + mídias
       for(const it of (s.itens||[])){
         const ir=await fetch(`${SUPA_URL}/rest/v1/agch_validacao_item`,{method:"POST",headers:H,
@@ -627,7 +744,9 @@ async function flushQueue(){
 async function uploadMedias(media,blocoId,visitaId,H,slotCod){
   for(const m of (media||[])){
     try{const blob=await mediaGet(m.id);if(!blob)continue;
-      const path=`${visitaId}/${m.id}.${m.type==="image"?"jpg":(m.type==="pdf"?"pdf":"bin")}`;
+      let ext=m.type==="image"?"jpg":(m.type==="pdf"?"pdf":(m.type==="video"?"mp4":((m.name||"").split(".").pop()||"bin")));
+      ext=(ext+"").replace(/[^a-z0-9]/gi,"").slice(0,8)||"bin";
+      const path=`${visitaId}/${m.id}.${ext}`;
       await fetch(`${SUPA_URL}/storage/v1/object/agch-midias/${path}`,{method:"POST",
         headers:{"apikey":SUPA_KEY,"Authorization":"Bearer "+H.Authorization.split(" ")[1]},body:blob});
       await fetch(`${SUPA_URL}/rest/v1/agch_midia`,{method:"POST",headers:H,

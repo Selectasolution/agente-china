@@ -214,9 +214,9 @@ const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
    dependeDe = só aparece se o sim/não indicado for "sim" */
 const CAMPOS_FORN = [
   {k:"id_fachada",      bloco:"identidade", tipo:"foto", label:"Fachada da fábrica",          zh:"工厂门面（招牌+地址）", crit:false},
-  {k:"id_license",      bloco:"identidade", tipo:"doc",  label:"Business license (营业执照)",   zh:"营业执照", crit:false, obrig:true},
+  {k:"id_license",      bloco:"identidade", tipo:"doc",  label:"Documentação da empresa",      zh:"公司证件 / 营业执照", crit:false, obrig:true},
   {k:"op_linha",        bloco:"operacao",   tipo:"foto", label:"Linha de produção rodando",    zh:"生产线在运行", crit:false},
-  {k:"op_qc",           bloco:"operacao",   tipo:"foto", label:"Bancada de teste / qualidade", zh:"质检台", crit:false},
+  {k:"op_qc",           bloco:"operacao",   tipo:"foto", label:"Bancada de teste / Controle qualidade", zh:"质检台", crit:false},
   {k:"op_estoque",      bloco:"operacao",   tipo:"foto", label:"Estoque",                      zh:"库存 / 仓库", crit:false},
   {k:"exp_homolog_doc", bloco:"export",     tipo:"doc",  label:"Documento de homologação",     zh:"认证文件", crit:false, dependeDe:"homologado"},
   {k:"co_tabela",       bloco:"comercial",  tipo:"doc",  label:"Tabela de preço atualizada",   zh:"最新报价单", crit:false},
@@ -380,9 +380,18 @@ $("nf_save").onclick=async()=>{
 function openSup(id){current=state.suppliers[id];
   $("fName").textContent=current.nome;
   $("fMeta").textContent=(current.cidade||"—")+(current.origem==="agente"?" · sugestão do agente":"");
-  const alvo=current.alvo?catBy(current.alvo):null;
-  $("fAlvo").innerHTML=alvo?`Produto-alvo desta visita: <b>${alvo.nome}</b>`:`<span style="color:var(--muted)">Sem produto-alvo definido</span>`;
+  $("fAlvo").innerHTML="";
+  ensureAlvoItem(current);
   renderFornBlocos();renderItens();show("vSup");refreshProg();}
+/* o produto-alvo nasce na lista de validação (primeiro, com selo "alvo"); os demais entram depois */
+function ensureAlvoItem(s){
+  if(!s.alvo)return;const c=catBy(s.alvo);if(!c)return;
+  s.itens=s.itens||[];
+  if(!s.itens.some(i=>i.tipo===s.alvo)){
+    s.itens.unshift({vid:"it_alvo_"+Date.now(),tipo:c.cod,rotulo:c.nome,is_alvo:true,blocos:{}});
+    saveState();
+  }
+}
 $("btnBack").onclick=()=>{renderList();show("vList");};
 
 function renderFornBlocos(){

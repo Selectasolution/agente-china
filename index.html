@@ -85,6 +85,13 @@
   .chips{display:flex;gap:8px;flex-wrap:wrap}
   .chip{padding:9px 16px;border:1.5px solid var(--line);border-radius:9px;background:#0a130e;font-size:13px;font-weight:700;cursor:pointer;color:var(--muted)}
   .chip.on{border-color:var(--green-bright);color:var(--green-bright);background:#0c2417}
+  .vermodelo{font-size:11px;font-weight:700;padding:3px 9px;border:1px solid var(--line);border-radius:7px;background:#0a130e;color:var(--green-bright);cursor:pointer;margin-left:6px;vertical-align:middle}
+  .ph.hasimg{background-size:cover;background-position:center}
+  .ph.hasimg span{display:none}
+  .modelov{position:fixed;inset:0;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;z-index:200;padding:18px}
+  .modelobox{max-width:520px;width:100%;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .modeloh{font-weight:800;margin-bottom:10px}
+  .modeloimg{min-height:80px;display:flex;align-items:center;justify-content:center}
   .shoot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 7px}
   .shootbtn{display:inline-flex;align-items:center;gap:7px;background:#0a130e;border:1px solid var(--line);color:var(--ink);padding:10px 13px;border-radius:9px;font-size:13.5px;font-weight:700;cursor:pointer}
   .qmsg{font-size:12px;font-weight:700;margin:0 0 7px;padding:6px 9px;border-radius:7px;display:none}
@@ -223,8 +230,8 @@ const CAMPOS_FORN = [
 ];
 /* ---------- EMPRESA — blocos VISUAIS (agrupam os campos acima + extras) ---------- */
 const BLOCOS_FORN_UI = [
-  {cod:"identidade", t:"Identidade & documentação"},
-  {cod:"operacao",   t:"Operação", carater:true, outros:true},
+  {cod:"identidade", t:"Identidade & documentação", carater:true},
+  {cod:"operacao",   t:"Operação", outros:true},
   {cod:"export",     t:"Exportação & Brasil",
      simnao:[{k:"exporta_brasil",label:"Exporta para o Brasil?"},{k:"homologado",label:"Tem produto homologado no Brasil?"}]},
   {cod:"comercial",  t:"Tabela de preço"},
@@ -501,14 +508,61 @@ function renderItens(){
   });
 }
 function buildItemSlots(box,it,c){
-  // foto ilustrativa de referência
+  // foto ilustrativa do produto inteiro (modelos/{produto}.jpg, se existir)
   const ref=document.createElement("div");ref.className="ref";
-  ref.innerHTML=`<div class="ph">foto<br>ilustrativa</div><div class="rt"><span class="reftag">foto ilustrativa</span><br><b>${c.nome}</b><br>${c.spec}</div>`;
+  ref.innerHTML=`<div class="ph" data-ph><span>foto<br>ilustrativa</span></div><div class="rt"><span class="reftag">foto ilustrativa</span><br><b>${esc(c.nome)}</b><br>${esc(c.spec||"")}</div>`;
+  const ph=ref.querySelector("[data-ph]");
+  const img=new Image();img.src=`modelos/${c.cod}.jpg`;
+  img.onload=()=>{ph.innerHTML="";ph.style.backgroundImage=`url(${img.src})`;ph.classList.add("hasimg");ph.style.cursor="pointer";ph.onclick=()=>showModelo(img.src,c.nome);};
   box.appendChild(ref);
+  // slots (cada ângulo) com foto-modelo clicável
   c.slots.forEach(sl=>{
     if(!it.blocos[sl.cod])it.blocos[sl.cod]={status:"",note:"",media:[]};
     box.appendChild(slotEl(sl,it.blocos[sl.cod],it,c));
   });
+  // ficha técnica do produto (anexo do fornecedor)
+  box.appendChild(fichaTecnicaEl(it));
+  // MOQ + amostra (fim do card)
+  box.appendChild(moqAmostraEl(it));
+}
+/* foto-modelo ampliada (lightbox); se a imagem ainda não existe, mostra "a definir" */
+function showModelo(url,titulo){
+  const ov=document.createElement("div");ov.className="modelov";
+  ov.innerHTML=`<div class="modelobox"><div class="modeloh">${esc(titulo||"Modelo")}</div><div data-img class="modeloimg">carregando…</div><div class="hint" style="text-align:center;margin-top:8px">toque fora pra fechar</div></div>`;
+  const imgbox=ov.querySelector("[data-img]");
+  const img=new Image();
+  img.onload=()=>{imgbox.innerHTML="";img.style.maxWidth="100%";img.style.borderRadius="8px";imgbox.appendChild(img);};
+  img.onerror=()=>{imgbox.innerHTML='<div style="padding:26px;color:var(--muted);text-align:center">(modelo a definir)<br><span style="font-size:12px">imagem ainda não cadastrada para este ângulo</span></div>';};
+  img.src=url;
+  ov.onclick=e=>{if(e.target===ov)ov.remove();};
+  document.body.appendChild(ov);
+}
+/* ficha técnica (产品规格书): anexo de qualquer arquivo entregue pelo fornecedor */
+function fichaTecnicaEl(it){
+  if(!it.blocos.ficha_tecnica)it.blocos.ficha_tecnica={status:"",note:"",media:[]};
+  const st=it.blocos.ficha_tecnica;
+  const div=document.createElement("div");div.className="slot";
+  div.innerHTML=`<div class="slotlabel">📎 Ficha técnica<div class="zh">产品规格书</div></div>
+    <div class="hint" style="margin:2px 0 6px">Anexe o arquivo que o fornecedor entregar (PDF, Excel, foto). Opcional.</div>`;
+  div.appendChild(captureUI(st,"Ficha técnica",false,true));
+  return div;
+}
+/* MOQ (o agente digita a quantidade) + amostra (sim/não) — fim do card */
+function moqAmostraEl(it){
+  const div=document.createElement("div");div.className="slot";
+  div.innerHTML=`<div class="qrow" style="border:none;padding:0 0 11px">
+      <div class="qlabel">MOQ — mínimo de compra</div>
+      <input type="number" inputmode="numeric" min="0" data-moq placeholder="ex.: 1000" value="${it.moq!=null?it.moq:""}" style="width:150px;display:inline-block"> <span style="color:var(--muted);font-size:13px">unidades</span>
+    </div>
+    <div class="qrow"><div class="qlabel">Tem amostra?</div><div class="chips" data-am></div></div>`;
+  const inp=div.querySelector("[data-moq]");
+  inp.oninput=()=>{const v=inp.value.trim();it.moq=v===""?null:parseInt(v,10);saveState();};
+  const box=div.querySelector("[data-am]");
+  [[true,"Sim"],[false,"Não"]].forEach(([v,t])=>{
+    const b=document.createElement("button");b.className="chip"+(it.tem_amostra===v?" on":"");b.textContent=t;
+    b.onclick=()=>{it.tem_amostra=v;box.querySelectorAll(".chip").forEach(x=>x.classList.remove("on"));b.classList.add("on");saveState();};
+    box.appendChild(b);});
+  return div;
 }
 
 /* elemento de bloco da fábrica (colapsável) */
@@ -536,7 +590,8 @@ function blocoEl(num,titulo,badge,ask,zh,cap,slots,stRef,scope,statusObj){
 /* elemento de slot de produto */
 function slotEl(sl,st,it,c){
   const div=document.createElement("div");div.className="slot";
-  div.innerHTML=`<div class="slotlabel">${sl.crit?'<span class="star">★</span>':'○'} ${sl.label}</div>`;
+  div.innerHTML=`<div class="slotlabel">${sl.crit?'<span class="star">★</span>':'○'} ${sl.label} <button class="vermodelo" data-vm>ver modelo</button></div>`;
+  div.querySelector("[data-vm]").onclick=()=>showModelo(`modelos/${c.cod}_${sl.cod}.jpg`, sl.label);
   div.appendChild(captureUI(st,sl.label,sl.crit));
   const sr=document.createElement("div");sr.className="statusrow";
   sr.innerHTML=`<button class="sbtn" data-s="ok">OK</button><button class="sbtn" data-s="warn">Atenção</button><button class="sbtn" data-s="bad">Reprova</button>`;
@@ -661,6 +716,8 @@ function buildData(){
     gerado_em:new Date().toISOString(),
     empresa:CAMPOS_FORN.map(c=>({campo:c.k,label:c.label,tipo:c.tipo,status:current.forn[c.k]?.status||null,nota:current.forn[c.k]?.note||null,midias:(current.forn[c.k]?.media||[]).length})),
     itens:(current.itens||[]).map(it=>{const c=catBy(it.tipo);return {tipo:it.tipo,rotulo:it.rotulo,alvo:it.is_alvo,
+      moq:(it.moq==null?null:it.moq),tem_amostra:(it.tem_amostra==null?null:it.tem_amostra),
+      ficha_tecnica:(it.blocos.ficha_tecnica?.media||[]).length,
       slots:(c?c.slots:[]).map(sl=>({cod:sl.cod,label:sl.label,critico:sl.crit,status:it.blocos[sl.cod]?.status||null,nota:it.blocos[sl.cod]?.note||null,midias:(it.blocos[sl.cod]?.media||[]).map(m=>({tipo:m.type,valida:m.valid!==false}))}))};})};
 }
 function pendencias(){
@@ -691,6 +748,8 @@ function buildReport(){const d=buildData();const L=[];
     L.push(` ${b.label}: [${lab}]${b.nota?" — "+b.nota:""}`);});
   L.push("");L.push("PRODUTOS");
   d.itens.forEach(it=>{L.push(` • ${it.rotulo}${it.alvo?" (ALVO)":""}`);
+    const sni=v=>v===true?"Sim":(v===false?"Não":"—");
+    L.push(`   MOQ: ${it.moq!=null?it.moq+" un":"—"}  ·  Amostra: ${sni(it.tem_amostra)}  ·  Ficha técnica: ${it.ficha_tecnica?it.ficha_tecnica+" arq.":"—"}`);
     it.slots.forEach(s=>L.push(`   ${s.critico?"★":"○"} ${s.label.split(":")[0]}: [${s.status?STLBL[s.status].toUpperCase():"PENDENTE"}] ${s.midias.filter(m=>m.valida).length} mídia(s)`));});
   L.push("");L.push("Gerado "+new Date().toLocaleString("pt-BR"));return L.join("\n");}
 
@@ -738,9 +797,11 @@ async function flushQueue(){
       // 4. itens + slots + mídias
       for(const it of (s.itens||[])){
         const ir=await fetch(`${SUPA_URL}/rest/v1/agch_validacao_item`,{method:"POST",headers:H,
-          body:JSON.stringify({visita_id:visita.id,tipo_item:it.tipo,rotulo_item:it.rotulo,is_alvo:it.is_alvo})});
+          body:JSON.stringify({visita_id:visita.id,tipo_item:it.tipo,rotulo_item:it.rotulo,is_alvo:it.is_alvo,
+            moq:(it.moq==null?null:it.moq),tem_amostra:(it.tem_amostra==null?null:it.tem_amostra)})});
         const item=(await ir.json())[0];
-        for(const sl of catBy(it.tipo).slots){const st=it.blocos[sl.cod];if(!st||!st.status&&!st.media.length)continue;
+        const cc=catBy(it.tipo);const blocosItem=(cc?cc.slots.slice():[]).concat([{cod:"ficha_tecnica"}]);
+        for(const sl of blocosItem){const st=it.blocos[sl.cod];if(!st||(!st.status&&!(st.media&&st.media.length)))continue;
           const br=await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
             body:JSON.stringify({visita_id:visita.id,validacao_item_id:item.id,nivel:"item",bloco_codigo:sl.cod,status:st.status||null,nota:st.note||null})});
           const bloco=(await br.json())[0];await uploadMedias(st.media,bloco.id,visita.id,H,sl.cod);}

@@ -223,10 +223,11 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v1.0
+   AGENTE CHINA — App de campo · Selecta Solution · v2.7
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
+   v2.7: ids gerados no cliente (uuid) + envio INSERT-only; pré-requisito do RLS por papel no banco.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -803,6 +804,11 @@ $("doss_conf").onclick=async()=>{
 /* =========================== sincronização (lista compartilhada) =========================== */
 function authH(){if(!token&&state.session)token=state.session.token;
   return {"apikey":SUPA_KEY,"Authorization":"Bearer "+token,"Content-Type":"application/json","Prefer":"return=representation"};}
+// header para escrita "cega": o agente é INSERT-only e NÃO lê a linha de volta (RLS por papel)
+function authHmin(){if(!token&&state.session)token=state.session.token;
+  return {"apikey":SUPA_KEY,"Authorization":"Bearer "+token,"Content-Type":"application/json","Prefer":"return=minimal"};}
+// id gerado no cliente: dispensa ler o retorno do servidor (que o RLS bloqueia para o agente)
+function uuid(){return (window.crypto&&crypto.randomUUID)?crypto.randomUUID():"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{const r=Math.random()*16|0,v=c==="x"?r:(r&0x3|0x8);return v.toString(16);});}
 function novoFlag(s){return s.status==="recebido"&&!s.visto;}
 function isAgente(){return (((state.session&&state.session.email)||"")).includes("aimportshop");}
 
@@ -812,11 +818,12 @@ async function pushFornecedor(s){
   if(s.remote)return null;
   if(!navigator.onLine)return null;
   if(!token&&state.session)token=state.session.token; if(!token)return null;
+  const novoId=uuid();
   try{
-    const r=await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor`,{method:"POST",headers:authH(),
-      body:JSON.stringify({nome:s.nome,cidade:s.cidade,origem:s.origem,observacao_alvo:s.alvo,status:s.status==="recebido"||s.status==="validado"?"nao_iniciado":(s.status||"nao_iniciado")})});
+    const r=await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor`,{method:"POST",headers:authHmin(),
+      body:JSON.stringify({id:novoId,nome:s.nome,cidade:s.cidade,origem:s.origem,observacao_alvo:s.alvo,status:s.status==="recebido"||s.status==="validado"?"nao_iniciado":(s.status||"nao_iniciado")})});
     if(!r.ok)return null;
-    const f=(await r.json())[0]; s.serverId=f.id; await saveState(); return f.id;
+    s.serverId=novoId; await saveState(); return novoId;
   }catch(e){console.warn("cadastro adiado",e);return null;}
 }
 
@@ -922,7 +929,7 @@ document.addEventListener("visibilitychange",()=>{if(!document.hidden&&navigator
 async function flushQueue(){
   if(!token&&state.session)token=state.session.token;
   if(!token||!navigator.onLine)return;
-  const H=authH();
+  const H=authHmin();
   for(const s of Object.values(state.suppliers)){
     if(s.remote)continue;                 // veio do servidor; nada a enviar daqui
     const sid=await pushFornecedor(s);     // garante que o fornecedor existe no servidor (cadastro)
@@ -935,26 +942,28 @@ async function flushQueue(){
         body:JSON.stringify({carater:q.carater||null,
           exporta_brasil:(q.exporta_brasil===undefined?null:q.exporta_brasil),
           homologado_brasil:(q.homologado===undefined?null:q.homologado),status:"recebido"})});
-      // 2. visita
-      let vr=await fetch(`${SUPA_URL}/rest/v1/agch_visita`,{method:"POST",headers:H,
-        body:JSON.stringify({fornecedor_id:sid,agente:state.session.email,status:"recebida",recebido_em:new Date().toISOString()})});
-      const visita=(await vr.json())[0];
+      // 2. visita (id gerado no cliente — agente é INSERT-only, não lê retorno)
+      const visitaId=uuid();
+      await fetch(`${SUPA_URL}/rest/v1/agch_visita`,{method:"POST",headers:H,
+        body:JSON.stringify({id:visitaId,fornecedor_id:sid,agente:state.session.email,status:"recebida",recebido_em:new Date().toISOString()})});
       // 3. campos de mídia da empresa (cada campo = um bloco_resposta) + uploads
       for(const c of CAMPOS_FORN){const st=s.forn[c.k];if(!st||(!st.status&&!(st.media&&st.media.length)))continue;
-        const br=await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
-          body:JSON.stringify({visita_id:visita.id,nivel:"fornecedor",bloco_codigo:c.k,status:st.status||null,nota:st.note||null})});
-        const bloco=(await br.json())[0];await uploadMedias(st.media,bloco.id,visita.id,H,c.k);}
+        const blocoId=uuid();
+        await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
+          body:JSON.stringify({id:blocoId,visita_id:visitaId,nivel:"fornecedor",bloco_codigo:c.k,status:st.status||null,nota:st.note||null})});
+        await uploadMedias(st.media,blocoId,visitaId,H,c.k);}
       // 4. itens + slots + mídias
       for(const it of (s.itens||[])){
-        const ir=await fetch(`${SUPA_URL}/rest/v1/agch_validacao_item`,{method:"POST",headers:H,
-          body:JSON.stringify({visita_id:visita.id,tipo_item:it.tipo,rotulo_item:it.rotulo,is_alvo:it.is_alvo,
+        const itemId=uuid();
+        await fetch(`${SUPA_URL}/rest/v1/agch_validacao_item`,{method:"POST",headers:H,
+          body:JSON.stringify({id:itemId,visita_id:visitaId,tipo_item:it.tipo,rotulo_item:it.rotulo,is_alvo:it.is_alvo,
             moq:(it.moq==null?null:it.moq),tem_amostra:(it.tem_amostra==null?null:it.tem_amostra)})});
-        const item=(await ir.json())[0];
         const cc=catBy(it.tipo);const blocosItem=(cc?cc.slots.slice():[]).concat([{cod:"ficha_tecnica"}]);
         for(const sl of blocosItem){const st=it.blocos[sl.cod];if(!st||(!st.status&&!(st.media&&st.media.length)))continue;
-          const br=await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
-            body:JSON.stringify({visita_id:visita.id,validacao_item_id:item.id,nivel:"item",bloco_codigo:sl.cod,status:st.status||null,nota:st.note||null})});
-          const bloco=(await br.json())[0];await uploadMedias(st.media,bloco.id,visita.id,H,sl.cod);}
+          const blocoId=uuid();
+          await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
+            body:JSON.stringify({id:blocoId,visita_id:visitaId,validacao_item_id:itemId,nivel:"item",bloco_codigo:sl.cod,status:st.status||null,nota:st.note||null})});
+          await uploadMedias(st.media,blocoId,visitaId,H,sl.cod);}
       }
       s.pendingSync=false;s.status="recebido";await saveState();
     }catch(e){console.warn("sync adiado:",e);/* fica na fila; tenta de novo quando online */}

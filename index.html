@@ -158,6 +158,7 @@
   .sheetfoot{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--line);flex-wrap:wrap}
   .sheetfoot button{flex:1;min-width:90px;padding:13px;border:none;border-radius:9px;font-weight:800;font-size:13px;cursor:pointer}
   .alertbox{background:#2a0f0f;border:1px solid var(--bad);color:#fca5a5;border-radius:9px;padding:10px;font-size:13px;font-weight:700;margin:0 0 10px}
+  .reenviobox{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:10px;margin:0 0 4px}
   .hint{font-size:11px;color:var(--muted);text-align:center;padding:8px 0 2px}
 </style>
 </head>
@@ -923,7 +924,13 @@ $("doss_conf").onclick=async()=>{
   if(pendencias().length){alert("Ainda há pendências. Complete o relatório antes de enviar.");return;}
   current.status="em_validacao";current.pendingSync=true;await saveState();
   $("mDoss").classList.remove("show");
-  if(navigator.onLine){await flushQueue();}else{alert("Salvo. Vai subir sozinho quando você pegar internet.");}
+  const alvo=current;
+  if(navigator.onLine){
+    lastSyncError=null;
+    await flushQueue();
+    if(alvo.pendingSync){alert("⚠ NÃO consegui confirmar o envio agora.\n\nMotivo: "+(lastSyncError||"sem detalhe")+"\n\nO relatório está salvo no aparelho. Toque nele na lista e use \"Reenviar relatório\" para tentar de novo.");}
+    else{alert("✓ Relatório enviado e confirmado no servidor.");}
+  }else{alert("Salvo. Vai subir sozinho quando você pegar internet.");}
   renderList();show("vList");
 };
 
@@ -936,6 +943,42 @@ function authHmin(){if(!token&&state.session)token=state.session.token;
   return {"apikey":SUPA_KEY,"Authorization":"Bearer "+token,"Content-Type":"application/json","Prefer":"return=minimal"};}
 // id gerado no cliente: dispensa ler o retorno do servidor (que o RLS bloqueia para o agente)
 function uuid(){return (window.crypto&&crypto.randomUUID)?crypto.randomUUID():"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{const r=Math.random()*16|0,v=c==="x"?r:(r&0x3|0x8);return v.toString(16);});}
+
+/* ===== token: renovação automática (o access_token do Supabase vence em ~1h) ===== */
+let lastSyncError=null;
+async function refreshToken(){
+  const rt=state.session&&state.session.refresh; if(!rt)return false;
+  try{
+    const r=await fetch(`${SUPA_URL}/auth/v1/token?grant_type=refresh_token`,{
+      method:"POST",headers:{"apikey":SUPA_KEY,"Content-Type":"application/json"},
+      body:JSON.stringify({refresh_token:rt})});
+    const d=await r.json();
+    if(!r.ok||!d.access_token)return false;
+    token=d.access_token;
+    state.session.token=token; state.session.refresh=d.refresh_token||rt; state.session.at=Date.now();
+    await saveState(); return true;
+  }catch(e){return false;}
+}
+async function ensureFreshToken(){
+  if(!state.session)return false;
+  if(!token)token=state.session.token;
+  if((Date.now()-(state.session.at||0))>50*60*1000)return await refreshToken(); // >50min: renova antes de vencer
+  return true;
+}
+// fetch que renova o token uma vez se levar 401, depois reenvia
+async function authFetch(url,method,bodyObj){
+  const mk=()=>({method,headers:authHmin(),body:bodyObj!==undefined?JSON.stringify(bodyObj):undefined});
+  let r=await fetch(url,mk());
+  if(r.status===401&&await refreshToken())r=await fetch(url,mk());
+  return r;
+}
+// confere a resposta do servidor; se não for OK, registra o erro real e ESTOURA (não marca recebido)
+async function chk(r,passo){
+  if(r.ok)return r;
+  let det="";try{det=((await r.text())||"").slice(0,120);}catch(e){}
+  lastSyncError="erro "+r.status+" em "+passo+(det?" — "+det:"");
+  throw new Error(lastSyncError);
+}
 function novoFlag(s){return s.status==="recebido"&&!s.visto;}
 function isAgente(){return (((state.session&&state.session.email)||"")).includes("aimportshop");}
 function nomeUsuario(){return isAgente()?"Bruno":"Selecta Solution";}
@@ -958,10 +1001,10 @@ async function pushFornecedor(s){
   if(s.remote)return null;
   if(!navigator.onLine)return null;
   if(!token&&state.session)token=state.session.token; if(!token)return null;
+  await ensureFreshToken();
   const novoId=uuid();
   try{
-    const r=await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor`,{method:"POST",headers:authHmin(),
-      body:JSON.stringify({id:novoId,nome:s.nome,cidade:s.cidade,origem:s.origem,observacao_alvo:s.alvo,status:s.status==="recebido"||s.status==="validado"?"nao_iniciado":(s.status||"nao_iniciado")})});
+    const r=await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor`,"POST",{id:novoId,nome:s.nome,cidade:s.cidade,origem:s.origem,observacao_alvo:s.alvo,status:s.status==="recebido"||s.status==="validado"?"nao_iniciado":(s.status||"nao_iniciado")});
     if(!r.ok)return null;
     s.serverId=novoId; await saveState(); return novoId;
   }catch(e){console.warn("cadastro adiado",e);return null;}
@@ -971,8 +1014,11 @@ async function pushFornecedor(s){
 async function pullFornecedores(){
   if(!navigator.onLine)return;
   if(!token&&state.session)token=state.session.token; if(!token)return;
+  await ensureFreshToken();
   try{
-    const r=await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor?select=id,nome,cidade,origem,status,observacao_alvo&order=criado_em.desc`,{headers:authH()});
+    const url=`${SUPA_URL}/rest/v1/agch_fornecedor?select=id,nome,cidade,origem,status,observacao_alvo&order=criado_em.desc`;
+    let r=await fetch(url,{headers:authH()});
+    if(r.status===401&&await refreshToken())r=await fetch(url,{headers:authH()});
     if(!r.ok)return;
     const rows=await r.json(); let changed=false;
     for(const f of rows){
@@ -988,6 +1034,22 @@ async function pullFornecedores(){
         changed=true;
       }
     }
+    // CORREÇÃO: a Selecta enxerga "relatório recebido" pela EXISTÊNCIA da visita,
+    // mesmo que o status do fornecedor não tenha mudado (o agente é barrado de alterar fornecedor origem 'selecta').
+    if(!isAgente()){
+      const vurl=`${SUPA_URL}/rest/v1/agch_visita?select=fornecedor_id,status`;
+      let vr=await fetch(vurl,{headers:authH()});
+      if(vr.status===401&&await refreshToken())vr=await fetch(vurl,{headers:authH()});
+      if(vr.ok){
+        const visitas=await vr.json();
+        const comRelatorio=new Set(visitas.filter(v=>v.status!=="complemento").map(v=>v.fornecedor_id));
+        for(const s of Object.values(state.suppliers)){
+          if(s.serverId&&comRelatorio.has(s.serverId)&&!["validado","reprovado","complemento","recebido"].includes(s.status)){
+            s.status="recebido"; s.visto=false; changed=true;
+          }
+        }
+      }
+    }
     if(changed){await saveState();renderList();}
   }catch(e){console.warn("pull adiado",e);}
 }
@@ -996,7 +1058,7 @@ async function pullFornecedores(){
 async function markValidado(s){
   s.status="validado";s.visto=true;await saveState();renderList();
   const sid=await pushFornecedor(s);
-  if(sid&&navigator.onLine){try{await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,{method:"PATCH",headers:authH(),body:JSON.stringify({status:"validado"})});}catch(e){console.warn("validado adiado",e);}}
+  if(sid&&navigator.onLine){await ensureFreshToken();try{await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,"PATCH",{status:"validado"});}catch(e){console.warn("validado adiado",e);}}
 }
 
 // ---------- COMPLEMENTO (lado Bruno): arquivo solto, FORA do relatório enviado ----------
@@ -1006,7 +1068,9 @@ function abrirComplemento(s){
   const jaenv=(s.complementos&&s.complementos.length)?`<div class="hint" style="text-align:left">Você já enviou ${s.complementos.length} arquivo(s) pendente(s) deste fornecedor.</div>`:'';
   ov.innerHTML=`<div class="modelobox"><div class="modeloh">Anexar arquivo pendente — ${esc(s.nome)}</div>
     ${aviso}
-    <div class="hint" style="text-align:left;margin-bottom:10px">O relatório enviado não é editável. Aqui você anexa um arquivo solto (documento correto ou complementar) — ele vai separado, para a Selecta analisar.</div>
+    <div class="reenviobox"><div class="hint" style="text-align:left;margin-bottom:8px">Em dúvida se o relatório chegou? Reenvie ao servidor (não duplica o seu trabalho — só reenvia).</div>
+      <button class="btn sec" data-reenv>Reenviar relatório ao servidor</button></div>
+    <div class="hint" style="text-align:left;margin:14px 0 10px">O relatório enviado não é editável. Aqui você anexa um arquivo solto (documento correto ou complementar) — ele vai separado, para a Selecta analisar.</div>
     ${jaenv}
     <div data-cap></div>
     <input type="text" data-leg placeholder="Legenda (ex.: certificado correto do teclado)" style="margin:10px 0">
@@ -1014,6 +1078,14 @@ function abrirComplemento(s){
       <button class="gen" data-send>Enviar arquivo pendente</button>
       <button class="btn sec" data-x>Fechar</button>
     </div></div>`;
+  ov.querySelector("[data-reenv]").onclick=async()=>{
+    if(!navigator.onLine){alert("Sem internet. Conecte para reenviar.");return;}
+    if(!await confirmar("Reenviar este relatório ao servidor agora?"))return;
+    s.pendingSync=true;await saveState();
+    lastSyncError=null;await flushQueue();
+    if(s.pendingSync)alert("⚠ Ainda não confirmou.\n\nMotivo: "+(lastSyncError||"sem detalhe")+"\n\nVai tentar de novo sozinho. Se persistir, me avise.");
+    else{alert("✓ Relatório confirmado no servidor.");ov.remove();}
+  };
   const capSt={media:[]};
   ov.querySelector("[data-cap]").appendChild(captureUI(capSt,"Arquivo pendente",false,true));
   ov.querySelector("[data-x]").onclick=()=>ov.remove();
@@ -1035,7 +1107,7 @@ function abrirComplemento(s){
 async function flushComplementos(){
   if(!token&&state.session)token=state.session.token;
   if(!token||!navigator.onLine)return;
-  const H=authHmin();
+  await ensureFreshToken();
   for(const s of Object.values(state.suppliers)){
     if(!s.complementos||!s.complementos.length)continue;
     const sid=s.serverId;if(!sid)continue;
@@ -1043,16 +1115,13 @@ async function flushComplementos(){
       if(!comp.pendingSync)continue;
       try{
         const visitaId=uuid();
-        await fetch(`${SUPA_URL}/rest/v1/agch_visita`,{method:"POST",headers:H,
-          body:JSON.stringify({id:visitaId,fornecedor_id:sid,agente:state.session.email,status:"complemento",recebido_em:new Date().toISOString()})});
+        await chk(await authFetch(`${SUPA_URL}/rest/v1/agch_visita`,"POST",{id:visitaId,fornecedor_id:sid,agente:state.session.email,status:"complemento",recebido_em:new Date().toISOString()}),"criar complemento");
         const blocoId=uuid();
-        await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
-          body:JSON.stringify({id:blocoId,visita_id:visitaId,nivel:"complemento",bloco_codigo:"anexo_pendente",nota:comp.legenda||null})});
-        await uploadMedias(comp.media,blocoId,visitaId,H,"anexo_pendente");
-        // se a Selecta havia pedido complemento, devolve o status para recebido
-        await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,{method:"PATCH",headers:H,body:JSON.stringify({status:"recebido"})});
+        await chk(await authFetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,"POST",{id:blocoId,visita_id:visitaId,nivel:"complemento",bloco_codigo:"anexo_pendente",nota:comp.legenda||null}),"bloco do complemento");
+        await uploadMedias(comp.media,blocoId,visitaId,null,"anexo_pendente");
+        try{await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,"PATCH",{status:"recebido"});}catch(e){}
         comp.pendingSync=false;await saveState();
-      }catch(e){console.warn("complemento adiado",e);}
+      }catch(e){console.warn("complemento NÃO confirmado:",e.message||e);}
     }
   }
 }
@@ -1060,7 +1129,7 @@ async function flushComplementos(){
 async function markComplemento(s){
   if(!await confirmar("Solicitar um complemento ao Bruno? O relatório será sinalizado na base dele."))return false;
   s.status="complemento";await saveState();renderList();
-  if(s.serverId&&navigator.onLine){try{await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${s.serverId}`,{method:"PATCH",headers:authH(),body:JSON.stringify({status:"complemento"})});}catch(e){console.warn("solicitar complemento adiado",e);}}
+  if(s.serverId&&navigator.onLine){await ensureFreshToken();try{await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${s.serverId}`,"PATCH",{status:"complemento"});}catch(e){console.warn("solicitar complemento adiado",e);}}
   return true;
 }
 
@@ -1084,6 +1153,7 @@ async function verDossie(s){
   const body=ov.querySelector("[data-body]");const foot=ov.querySelector("[data-foot]");
   if(!navigator.onLine){body.innerHTML='<p class="hint">Sem internet. Conecte pra carregar o dossiê.</p>';return;}
   try{
+    await ensureFreshToken();
     const H=authH();
     const sid=s.serverId||await pushFornecedor(s);
     if(!sid){body.innerHTML='<p class="hint">Não encontrei este fornecedor no servidor.</p>';return;}
@@ -1178,64 +1248,60 @@ document.addEventListener("visibilitychange",()=>{if(!document.hidden&&navigator
 async function flushQueue(){
   if(!token&&state.session)token=state.session.token;
   if(!token||!navigator.onLine)return;
-  const H=authHmin();
+  await ensureFreshToken();
   for(const s of Object.values(state.suppliers)){
-    if(s.remote&&!s.pendingSync)continue;  // remote sem coleta pendente: nada a enviar (com coleta, o agente envia o dossiê do alvo atribuído pela Selecta)
+    if(s.remote&&!s.pendingSync)continue;  // remote sem coleta pendente: nada a enviar
     const sid=await pushFornecedor(s);     // garante o fornecedor no servidor (remote já tem serverId; não duplica)
     if(!s.pendingSync)continue;            // só envia o dossiê de quem gravou+confirmou
-    if(!sid)continue;                      // ainda sem internet; tenta na próxima
+    if(!sid)continue;                      // ainda sem fornecedor no servidor; tenta na próxima
     try{
-      const q=s.qual||{};
-      // 1. atualiza o fornecedor que já existe (NÃO recria) + status recebido
-      await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,{method:"PATCH",headers:H,
-        body:JSON.stringify({carater:q.carater||null,
-          exporta_brasil:(q.exporta_brasil===undefined?null:q.exporta_brasil),
-          homologado_brasil:(q.homologado===undefined?null:q.homologado),status:"recebido"})});
-      // 2. visita (id gerado no cliente — agente é INSERT-only, não lê retorno)
-      const visitaId=uuid();
-      await fetch(`${SUPA_URL}/rest/v1/agch_visita`,{method:"POST",headers:H,
-        body:JSON.stringify({id:visitaId,fornecedor_id:sid,agente:state.session.email,status:"recebida",recebido_em:new Date().toISOString()})});
-      // 3. campos de mídia da empresa (cada campo = um bloco_resposta) + uploads
-      for(const c of CAMPOS_FORN){const st=s.forn[c.k];if(!st||(!(st.media&&st.media.length)&&!(st.note&&st.note.trim())))continue;
-        const blocoId=uuid();
-        await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
-          body:JSON.stringify({id:blocoId,visita_id:visitaId,nivel:"fornecedor",bloco_codigo:c.k,status:st.status||null,nota:st.note||null})});
-        await uploadMedias(st.media,blocoId,visitaId,H,c.k);}
-      // 3b. certificações constatadas pelo agente (cada uma = um bloco_resposta nivel fornecedor) + documentos
-      for(const cert of CERTS){const st=s.certs&&s.certs[cert.k];if(!st||st.tem!==true)continue;
-        const blocoId=uuid();
-        await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
-          body:JSON.stringify({id:blocoId,visita_id:visitaId,nivel:"fornecedor",bloco_codigo:"cert_"+cert.k,status:null,nota:"Itens: "+((st.itens||"").trim()||"—")})});
-        await uploadMedias(st.media,blocoId,visitaId,H,"cert_"+cert.k);}
-      // 4. itens + slots + mídias
-      for(const it of (s.itens||[])){
-        const itemId=uuid();
-        await fetch(`${SUPA_URL}/rest/v1/agch_validacao_item`,{method:"POST",headers:H,
-          body:JSON.stringify({id:itemId,visita_id:visitaId,tipo_item:it.tipo,rotulo_item:it.rotulo,is_alvo:it.is_alvo,
-            moq:(it.moq==null?null:it.moq),tem_amostra:(it.tem_amostra==null?null:it.tem_amostra)})});
-        const cc=catBy(it.tipo);const blocosItem=(cc?cc.slots.slice():[]).concat([{cod:"ficha_tecnica"}]);
-        for(const sl of blocosItem){const st=it.blocos[sl.cod];if(!st||(!(st.media&&st.media.length)&&!(st.note&&st.note.trim())))continue;
-          const blocoId=uuid();
-          await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
-            body:JSON.stringify({id:blocoId,visita_id:visitaId,validacao_item_id:itemId,nivel:"item",bloco_codigo:sl.cod,status:st.status||null,nota:st.note||null})});
-          await uploadMedias(st.media,blocoId,visitaId,H,sl.cod);}
-      }
-      s.pendingSync=false;s.status="recebido";await saveState();renderList();
-    }catch(e){console.warn("sync adiado:",e);/* fica na fila; tenta de novo quando online */}
+      await enviarRelatorio(s,sid);        // sobe TUDO com verificação; estoura se algo falhar
+      s.pendingSync=false;s.status="recebido";await saveState();renderList();  // só aqui o "recebido" é real
+    }catch(e){console.warn("envio NÃO confirmado:",e.message||e);/* fica pendente; reenvia depois */}
   }
   renderList();
 }
+// envia o relatório completo conferindo cada passo no servidor (a visita é a âncora; sem ela, nada conta)
+async function enviarRelatorio(s,sid){
+  const q=s.qual||{};
+  // 1. VISITA primeiro — registro-âncora. Se falhar, estoura e nada é dado como recebido.
+  const visitaId=uuid();
+  await chk(await authFetch(`${SUPA_URL}/rest/v1/agch_visita`,"POST",{id:visitaId,fornecedor_id:sid,agente:state.session.email,status:"recebida",recebido_em:new Date().toISOString()}),"criar relatório");
+  // 2. status do fornecedor (best-effort: o RLS pode barrar fornecedor origem 'selecta'; a Selecta enxerga pela visita)
+  try{await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,"PATCH",{carater:q.carater||null,exporta_brasil:(q.exporta_brasil===undefined?null:q.exporta_brasil),homologado_brasil:(q.homologado===undefined?null:q.homologado),status:"recebido"});}catch(e){}
+  // 3. blocos da empresa + arquivos (verificados)
+  for(const c of CAMPOS_FORN){const st=s.forn[c.k];if(!st||(!(st.media&&st.media.length)&&!(st.note&&st.note.trim())))continue;
+    const blocoId=uuid();
+    await chk(await authFetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,"POST",{id:blocoId,visita_id:visitaId,nivel:"fornecedor",bloco_codigo:c.k,nota:st.note||null}),"bloco "+c.k);
+    await uploadMedias(st.media,blocoId,visitaId,null,c.k);}
+  // 3b. certificações constatadas + documentos
+  for(const cert of CERTS){const st=s.certs&&s.certs[cert.k];if(!st||st.tem!==true)continue;
+    const blocoId=uuid();
+    await chk(await authFetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,"POST",{id:blocoId,visita_id:visitaId,nivel:"fornecedor",bloco_codigo:"cert_"+cert.k,nota:"Itens: "+((st.itens||"").trim()||"—")}),"certificação");
+    await uploadMedias(st.media,blocoId,visitaId,null,"cert_"+cert.k);}
+  // 4. itens + slots + arquivos
+  for(const it of (s.itens||[])){
+    const itemId=uuid();
+    await chk(await authFetch(`${SUPA_URL}/rest/v1/agch_validacao_item`,"POST",{id:itemId,visita_id:visitaId,tipo_item:it.tipo,rotulo_item:it.rotulo,is_alvo:it.is_alvo,moq:(it.moq==null?null:it.moq),tem_amostra:(it.tem_amostra==null?null:it.tem_amostra)}),"produto "+(it.rotulo||""));
+    const cc=catBy(it.tipo);const blocosItem=(cc?cc.slots.slice():[]).concat([{cod:"ficha_tecnica"}]);
+    for(const sl of blocosItem){const st=it.blocos[sl.cod];if(!st||(!(st.media&&st.media.length)&&!(st.note&&st.note.trim())))continue;
+      const blocoId=uuid();
+      await chk(await authFetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,"POST",{id:blocoId,visita_id:visitaId,validacao_item_id:itemId,nivel:"item",bloco_codigo:sl.cod,nota:st.note||null}),"item "+sl.cod);
+      await uploadMedias(st.media,blocoId,visitaId,null,sl.cod);}
+  }
+}
 async function uploadMedias(media,blocoId,visitaId,H,slotCod){
   for(const m of (media||[])){
-    try{const blob=await mediaGet(m.id);if(!blob)continue;
-      let ext=m.type==="image"?"jpg":(m.type==="pdf"?"pdf":(m.type==="video"?"mp4":((m.name||"").split(".").pop()||"bin")));
-      ext=(ext+"").replace(/[^a-z0-9]/gi,"").slice(0,8)||"bin";
-      const path=`${visitaId}/${m.id}.${ext}`;
-      await fetch(`${SUPA_URL}/storage/v1/object/agch-midias/${path}`,{method:"POST",
-        headers:{"apikey":SUPA_KEY,"Authorization":"Bearer "+H.Authorization.split(" ")[1]},body:blob});
-      await fetch(`${SUPA_URL}/rest/v1/agch_midia`,{method:"POST",headers:H,
-        body:JSON.stringify({bloco_resposta_id:blocoId,slot_codigo:slotCod||null,tipo:m.type,valida:m.valid!==false,metrica:m.metric||null,storage_path:path})});
-    }catch(e){console.warn("upload mídia adiado",e);}
+    const blob=await mediaGet(m.id);if(!blob)continue;
+    let ext=m.type==="image"?"jpg":(m.type==="pdf"?"pdf":(m.type==="video"?"mp4":((m.name||"").split(".").pop()||"bin")));
+    ext=(ext+"").replace(/[^a-z0-9]/gi,"").slice(0,8)||"bin";
+    const path=`${visitaId}/${m.id}.${ext}`;
+    const stUrl=`${SUPA_URL}/storage/v1/object/agch-midias/${path}`;
+    const mkUp=()=>({method:"POST",headers:{"apikey":SUPA_KEY,"Authorization":"Bearer "+token,"x-upsert":"true"},body:blob});
+    let r=await fetch(stUrl,mkUp());
+    if(r.status===401&&await refreshToken())r=await fetch(stUrl,mkUp());
+    await chk(r,"upload de arquivo");
+    await chk(await authFetch(`${SUPA_URL}/rest/v1/agch_midia`,"POST",{bloco_resposta_id:blocoId,slot_codigo:slotCod||null,tipo:m.type,valida:m.valid!==false,metrica:m.metric||null,storage_path:path}),"registro de arquivo");
   }
 }
 

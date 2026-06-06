@@ -74,6 +74,14 @@
   .delbtn{margin-top:10px;background:transparent;border:1px solid var(--bad);color:#fca5a5;border-radius:8px;padding:8px 12px;font-size:.8rem;font-weight:700;cursor:pointer}
   .delbtn:active{transform:translateY(1px)}
   .delbtn.hidden{display:none!important}
+  .certbox{border-top:1px solid var(--line);padding-top:10px;margin-top:4px}
+  .certrow{border-top:1px solid rgba(255,255,255,.05);padding:9px 0}
+  .certrow:first-of-type{border-top:none}
+  .certhead{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+  .certname{font-size:13.5px;font-weight:700}
+  .certname .zh{font-weight:400}
+  .certsub{margin-top:8px}
+  .certsub input{margin-bottom:8px}
   .backbtn{background:transparent;border:1.5px solid var(--line);color:var(--muted);border-radius:8px;padding:6px 11px;font-size:12px;font-weight:700;cursor:pointer}
   .step{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:0 0 11px;overflow:hidden}
   .step.crit{border-color:var(--deep);border-width:1.5px}
@@ -249,6 +257,7 @@
    v2.11: Sair NUNCA apaga coleta não enviada + armazenamento persistente (anti-despejo) + aviso "N coletas aguardando envio".
    v2.12: botão Excluir fornecedor (só Selecta) na tela do cadastro, com confirmação Sim/Não — apaga no servidor e localmente.
    v2.13: inteligência silenciosa — removido o veredito (OK/Atenção/Reprova) do app do agente. Bruno só CAPTURA (foto/anexo) + observação livre ("achado importante"). Avaliação de valor é 100% da Selecta, por fora. Bloco conta como coletado por foto OU observação.
+   v2.14: quadro de certificações da fábrica (ANATEL, INMETRO, FCC, CE, RoHS, ISO 9001, CCC, UL) no bloco de documentação. Bruno constata in loco o que existe → "Tem" abre campo "quais itens" + anexo do documento. Captura/confirmação de fato; análise é interna.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -267,12 +276,24 @@ const CAMPOS_FORN = [
 ];
 /* ---------- EMPRESA — blocos VISUAIS (agrupam os campos acima + extras) ---------- */
 const BLOCOS_FORN_UI = [
-  {cod:"identidade", t:"Identidade & documentação", carater:true},
+  {cod:"identidade", t:"Identidade & documentação", carater:true, certs:true},
   {cod:"operacao",   t:"Operação", outros:true},
   {cod:"export",     t:"Exportação & Brasil",
      simnao:[{k:"exporta_brasil",label:"Exporta para o Brasil?"},{k:"homologado",label:"Tem produto homologado no Brasil?"}]},
   {cod:"comercial",  t:"Tabela de preço"},
 ];
+/* ---------- Certificações da fábrica — Bruno CONSTATA in loco o que existe e anexa; análise é interna ---------- */
+const CERTS = [
+  {k:"anatel",  t:"ANATEL",   sub:"Brasil · rádio/telecom"},
+  {k:"inmetro", t:"INMETRO",  sub:"Brasil · segurança"},
+  {k:"fcc",     t:"FCC",      sub:"EUA · rádio"},
+  {k:"ce",      t:"CE",       sub:"Europa"},
+  {k:"rohs",    t:"RoHS",     sub:"substâncias perigosas"},
+  {k:"iso9001", t:"ISO 9001", sub:"qualidade da fábrica"},
+  {k:"ccc",     t:"CCC",      sub:"China · compulsório"},
+  {k:"ul",      t:"UL",       sub:"EUA · segurança"},
+];
+const certBy = k => CERTS.find(c=>c.k===k);
 const campoBy   = k   => CAMPOS_FORN.find(c=>c.k===k);
 const camposDoBloco = cod => CAMPOS_FORN.filter(c=>c.bloco===cod);
 
@@ -499,6 +520,7 @@ function renderBlocoBody(sec,b){
     body.appendChild(c.tipo==="doc"?campoDocEl(c):campoFotoEl(c));
   });
   if(b.outros) body.appendChild(outrosItensEl());
+  if(b.certs)  body.appendChild(certsQuadroEl());
   const visiveis=camposDoBloco(b.cod).filter(c=>!c.dependeDe||current.qual[c.dependeDe]===true);
   sec.classList.toggle("done", visiveis.length>0 && visiveis.every(c=>campoDone(current,c)));
 }
@@ -542,6 +564,40 @@ function simNaoEl(q,sec,b){
     bt.onclick=()=>{current.qual[q.k]=v;saveState();renderBlocoBody(sec,b);};
     box.appendChild(bt);});
   return div;
+}
+/* quadro de certificações da fábrica: Bruno marca o que CONSTATA in loco; se "Tem", informa os itens e anexa o documento */
+function certsQuadroEl(){
+  if(!current.certs)current.certs={};
+  const div=document.createElement("div");div.className="qrow certbox";
+  div.innerHTML=`<div class="qlabel">Certificações da fábrica</div>
+    <div class="hint" style="margin:-2px 0 8px">Marque o que a fábrica comprovar na sua frente. Se tiver, peça o documento e anexe — a análise é feita por dentro.</div>`;
+  CERTS.forEach(cert=>{
+    if(!current.certs[cert.k])current.certs[cert.k]={tem:null,itens:"",media:[]};
+    div.appendChild(certLinhaEl(cert));
+  });
+  return div;
+}
+function certLinhaEl(cert){
+  const st=current.certs[cert.k];
+  const wrap=document.createElement("div");wrap.className="certrow";
+  wrap.innerHTML=`<div class="certhead"><span class="certname">${cert.t} <span class="zh">${cert.sub}</span></span><div class="chips" data-c></div></div><div class="certsub" data-sub></div>`;
+  const box=wrap.querySelector("[data-c]");
+  [[true,"Tem"],[false,"Não"]].forEach(([v,t])=>{
+    const b=document.createElement("button");b.className="chip"+(st.tem===v?" on":"");b.textContent=t;
+    b.onclick=()=>{st.tem=v;saveState();box.querySelectorAll(".chip").forEach(x=>x.classList.remove("on"));b.classList.add("on");renderCertSub(wrap,cert);};
+    box.appendChild(b);
+  });
+  renderCertSub(wrap,cert);
+  return wrap;
+}
+function renderCertSub(wrap,cert){
+  const sub=wrap.querySelector("[data-sub]");sub.innerHTML="";
+  const st=current.certs[cert.k];
+  if(st.tem!==true)return;
+  const inp=document.createElement("input");inp.type="text";inp.placeholder="Quais produtos/modelos têm o "+cert.t+"?";inp.value=st.itens||"";
+  inp.oninput=()=>{st.itens=inp.value;saveState();};
+  sub.appendChild(inp);
+  sub.appendChild(captureUI(st,cert.t+" — documento",false,true));
 }
 /* gatilho "outros itens": abre o mesmo seletor de produtos; entram pra validar na visita */
 function outrosItensEl(){
@@ -795,6 +851,7 @@ function buildData(){
       carater:current.qual.carater||null,exporta_brasil:current.qual.exporta_brasil,homologado_brasil:current.qual.homologado},
     gerado_em:new Date().toISOString(),
     empresa:CAMPOS_FORN.map(c=>({campo:c.k,label:c.label,tipo:c.tipo,status:current.forn[c.k]?.status||null,nota:current.forn[c.k]?.note||null,midias:(current.forn[c.k]?.media||[]).length})),
+    certificacoes:CERTS.filter(cert=>current.certs&&current.certs[cert.k]&&current.certs[cert.k].tem===true).map(cert=>({cert:cert.t,itens:(current.certs[cert.k].itens||"").trim()||null,docs:(current.certs[cert.k].media||[]).length})),
     itens:(current.itens||[]).map(it=>{const c=catBy(it.tipo);return {tipo:it.tipo,rotulo:it.rotulo,alvo:it.is_alvo,
       moq:(it.moq==null?null:it.moq),tem_amostra:(it.tem_amostra==null?null:it.tem_amostra),
       ficha_tecnica:(it.blocos.ficha_tecnica?.media||[]).length,
@@ -826,6 +883,10 @@ function buildReport(){const d=buildData();const L=[];
   L.push("A EMPRESA");
   d.empresa.forEach(b=>{const lab=b.tipo==="doc"?`${b.midias} arquivo(s)`:(b.midias?`${b.midias} foto(s)`:"sem registro");
     L.push(` ${b.label}: [${lab}]${b.nota?" — "+b.nota:""}`);});
+  L.push("");L.push("CERTIFICAÇÕES (constatadas em campo)");
+  if(d.certificacoes&&d.certificacoes.length){
+    d.certificacoes.forEach(c=>L.push(` ${c.cert}: ${c.itens||"itens não informados"} [${c.docs?c.docs+" doc(s)":"sem documento"}]`));
+  }else{ L.push(" nenhuma marcada"); }
   L.push("");L.push("PRODUTOS");
   d.itens.forEach(it=>{L.push(` • ${it.rotulo}${it.alvo?" (ALVO)":""}`);
     const sni=v=>v===true?"Sim":(v===false?"Não":"—");
@@ -870,6 +931,7 @@ function temColeta(s){
   if(blocos.some(b=>b&&(b.status||(b.media&&b.media.length))))return true;  // tem foto/status coletado
   const q=s.qual||{};
   if(q.carater||q.exporta_brasil!=null||q.homologado!=null)return true;
+  if(s.certs&&Object.values(s.certs).some(c=>c&&(c.tem!=null||(c.media&&c.media.length)||(c.itens&&c.itens.trim()))))return true;
   return false;                            // cópia pura do servidor: descartável (recarrega no pull)
 }
 
@@ -921,7 +983,7 @@ async function markValidado(s){
 }
 
 // ---------- VISUALIZADOR DE DOSSIÊ (lado Selecta) ----------
-function labelBlocoEmpresa(cod){const c=campoBy(cod);if(c)return c.label;if(cod==="ficha_tecnica")return "Ficha técnica";return cod;}
+function labelBlocoEmpresa(cod){if(cod&&cod.indexOf("cert_")===0){const c=certBy(cod.slice(5));return c?("Certificação "+c.t):cod;}const c=campoBy(cod);if(c)return c.label;if(cod==="ficha_tecnica")return "Ficha técnica";return cod;}
 function labelSlot(tipoItem,slotCod){if(slotCod==="ficha_tecnica")return "Ficha técnica";const c=catBy(tipoItem);const sl=c&&c.slots.find(x=>x.cod===slotCod);return sl?sl.label:slotCod;}
 function blocoDossHtml(label,b,mds,signed){
   const thumbs=(mds||[]).map(m=>{const url=signed[m.storage_path];if(!url)return "";
@@ -1014,6 +1076,12 @@ async function flushQueue(){
         await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
           body:JSON.stringify({id:blocoId,visita_id:visitaId,nivel:"fornecedor",bloco_codigo:c.k,status:st.status||null,nota:st.note||null})});
         await uploadMedias(st.media,blocoId,visitaId,H,c.k);}
+      // 3b. certificações constatadas pelo agente (cada uma = um bloco_resposta nivel fornecedor) + documentos
+      for(const cert of CERTS){const st=s.certs&&s.certs[cert.k];if(!st||st.tem!==true)continue;
+        const blocoId=uuid();
+        await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
+          body:JSON.stringify({id:blocoId,visita_id:visitaId,nivel:"fornecedor",bloco_codigo:"cert_"+cert.k,status:null,nota:"Itens: "+((st.itens||"").trim()||"—")})});
+        await uploadMedias(st.media,blocoId,visitaId,H,"cert_"+cert.k);}
       // 4. itens + slots + mídias
       for(const it of (s.itens||[])){
         const itemId=uuid();

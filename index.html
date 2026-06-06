@@ -248,6 +248,7 @@
    v2.10: identidade amigável (Selecta Solution / Bruno) no topo + "cadastrado por" discreto no dossiê + botão Sair/Trocar usuário.
    v2.11: Sair NUNCA apaga coleta não enviada + armazenamento persistente (anti-despejo) + aviso "N coletas aguardando envio".
    v2.12: botão Excluir fornecedor (só Selecta) na tela do cadastro, com confirmação Sim/Não — apaga no servidor e localmente.
+   v2.13: inteligência silenciosa — removido o veredito (OK/Atenção/Reprova) do app do agente. Bruno só CAPTURA (foto/anexo) + observação livre ("achado importante"). Avaliação de valor é 100% da Selecta, por fora. Bloco conta como coletado por foto OU observação.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -415,9 +416,9 @@ function renderList(){
   const pe=$("pendAviso");
   if(pe){if(pend>0){pe.textContent="⏳ "+pend+" coleta(s) aguardando envio — sobem sozinhas quando houver internet.";pe.classList.remove("hidden");}else{pe.classList.add("hidden");}}
 }
-function campoDone(s,c){const st=s.forn&&s.forn[c.k];if(!st)return false;return c.tipo==="doc"?!!(st.media&&st.media.length):!!st.status;}
+function campoDone(s,c){const st=s.forn&&s.forn[c.k];if(!st)return false;return c.tipo==="doc"?!!(st.media&&st.media.length):(!!(st.media&&st.media.length)||!!(st.note&&st.note.trim()));}
 function blocosDoneForn(s){return CAMPOS_FORN.filter(c=>campoDone(s,c)).length;}
-function itemDone(i){return Object.values(i.blocos).some(b=>b.status);}
+function itemDone(i){return Object.values(i.blocos).some(b=>b&&((b.media&&b.media.length)||(b.note&&b.note.trim())));}
 
 /* novo fornecedor */
 function fillAlvoSelect(){const sel=$("nf_alvo");sel.innerHTML='<option value="">— escolher produto-alvo —</option>'+
@@ -507,19 +508,8 @@ function campoFotoEl(c){
   const div=document.createElement("div");div.className="slot";
   div.innerHTML=`<div class="slotlabel">${c.crit?'<span class="star">★</span>':'○'} ${c.label}${c.zh?`<div class="zh">${c.zh}</div>`:''}</div>`;
   div.appendChild(captureUI(st,c.label,c.crit,false));
-  const sr=document.createElement("div");sr.className="statusrow";
-  sr.innerHTML=`<button class="sbtn" data-s="ok">OK</button><button class="sbtn" data-s="warn">Atenção</button><button class="sbtn" data-s="bad">Reprova</button>`;
-  div.appendChild(sr);
-  const lock=document.createElement("div");lock.className="lock";lock.textContent='⚠ "OK" só com evidência válida.';div.appendChild(lock);
-  const note=document.createElement("textarea");note.className="note";note.placeholder="Observação...";note.value=st.note||"";
-  note.oninput=()=>{st.note=note.value;saveState();};div.appendChild(note);
-  sr.querySelectorAll(".sbtn").forEach(btn=>{
-    if(btn.dataset.s===st.status)btn.classList.add("on");
-    btn.onclick=()=>{const wantOk=btn.dataset.s==="ok";const hasValid=st.media.some(m=>m.valid!==false);
-      if(wantOk&&!hasValid){lock.classList.add("show");return;}
-      lock.classList.remove("show");sr.querySelectorAll(".sbtn").forEach(x=>x.classList.remove("on"));
-      btn.classList.add("on");st.status=btn.dataset.s;saveState();refreshProg();};
-  });
+  const note=document.createElement("textarea");note.className="note";note.placeholder="Registre algum achado importante (ex.: portão fechado, fornecedor só de fachada)…";note.value=st.note||"";
+  note.oninput=()=>{st.note=note.value;saveState();refreshProg();};div.appendChild(note);
   return div;
 }
 /* campo DOCUMENTO: anexo de qualquer arquivo (sem status, sem validação de nitidez) */
@@ -695,20 +685,8 @@ function slotEl(sl,st,it,c){
   div.innerHTML=`<div class="slotlabel">${sl.crit?'<span class="star">★</span>':'○'} ${sl.label} <button class="vermodelo" data-vm>ver modelo</button></div>`;
   div.querySelector("[data-vm]").onclick=()=>showModelo(`modelos/${c.cod}_${sl.cod}.jpg`, sl.label);
   div.appendChild(captureUI(st,sl.label,sl.crit));
-  const sr=document.createElement("div");sr.className="statusrow";
-  sr.innerHTML=`<button class="sbtn" data-s="ok">OK</button><button class="sbtn" data-s="warn">Atenção</button><button class="sbtn" data-s="bad">Reprova</button>`;
-  div.appendChild(sr);
-  const lock=document.createElement("div");lock.className="lock";lock.textContent='⚠ "OK" só com evidência válida.';div.appendChild(lock);
-  const note=document.createElement("textarea");note.className="note";note.placeholder="Observação...";note.value=st.note||"";
-  note.oninput=()=>{st.note=note.value;saveState();};div.appendChild(note);
-  // wire status
-  sr.querySelectorAll(".sbtn").forEach(b=>{
-    if(b.dataset.s===st.status)b.classList.add("on");
-    b.onclick=()=>{const wantOk=b.dataset.s==="ok";const hasValid=st.media.some(m=>m.valid!==false);
-      if(wantOk&&sl.crit&&!hasValid){lock.classList.add("show");return;}
-      lock.classList.remove("show");sr.querySelectorAll(".sbtn").forEach(x=>x.classList.remove("on"));
-      b.classList.add("on");st.status=b.dataset.s;saveState();refreshProg();};
-  });
+  const note=document.createElement("textarea");note.className="note";note.placeholder="Registre algum achado importante…";note.value=st.note||"";
+  note.oninput=()=>{st.note=note.value;saveState();refreshProg();};div.appendChild(note);
   return div;
 }
 function wireStatus(el,st,reqEvid){
@@ -807,7 +785,7 @@ function renderItemPicker(f){const el=$("it_lista");f=f.toLowerCase();el.innerHT
 /* progresso */
 function refreshProg(){if(!current){$("progfill").style.width="0";return;}
   let tot=CAMPOS_FORN.length,done=blocosDoneForn(current);
-  (current.itens||[]).forEach(it=>{const c=catBy(it.tipo);if(!c)return;c.slots.forEach(sl=>{tot++;if(it.blocos[sl.cod]&&it.blocos[sl.cod].status)done++;});});
+  (current.itens||[]).forEach(it=>{const c=catBy(it.tipo);if(!c)return;c.slots.forEach(sl=>{tot++;const b=it.blocos[sl.cod];if(b&&((b.media&&b.media.length)||(b.note&&b.note.trim())))done++;});});
   $("progfill").style.width=(tot?done/tot*100:0)+"%";}
 
 /* =========================== gravar / dossiê =========================== */
@@ -828,13 +806,13 @@ function pendencias(){
   CAMPOS_FORN.forEach(c=>{
     if(c.dependeDe && current.qual[c.dependeDe]!==true) return;
     const st=current.forn[c.k];
-    if(c.tipo==="foto"){ if(!st||!st.status) p.push("Empresa: "+c.label); }
+    if(c.tipo==="foto"){ if(!st||(!(st.media&&st.media.length)&&!(st.note&&st.note.trim()))) p.push("Empresa: "+c.label); }
     else if(c.obrig){ if(!st||!(st.media&&st.media.length)) p.push("Empresa: "+c.label+" (documento)"); }
   });
   if(!current.qual.carater) p.push("Empresa: definir Fábrica/Trading");
   if(current.alvo){const has=(current.itens||[]).some(i=>i.tipo===current.alvo);if(!has&&catBy(current.alvo))p.push("⚠ PRODUTO-ALVO ("+catBy(current.alvo).nome+") ainda não validado");}
   (current.itens||[]).forEach(it=>{const c=catBy(it.tipo);if(!c)return;c.slots.filter(s=>s.crit).forEach(sl=>{
-    const st=it.blocos[sl.cod];if(!st||!st.status)p.push(it.rotulo+": ★ "+sl.label.split(":")[0]);});});
+    const st=it.blocos[sl.cod];if(!st||(!(st.media&&st.media.length)&&!(st.note&&st.note.trim())))p.push(it.rotulo+": ★ "+sl.label.split(":")[0]);});});
   return p;
 }
 function buildReport(){const d=buildData();const L=[];
@@ -846,13 +824,13 @@ function buildReport(){const d=buildData();const L=[];
   L.push("Exporta BR: "+sn(d.fornecedor.exporta_brasil)+"  ·  Homologado BR: "+sn(d.fornecedor.homologado_brasil));
   L.push("Alvo    : "+(d.fornecedor.alvo&&catBy(d.fornecedor.alvo)?catBy(d.fornecedor.alvo).nome:"—"));L.push("");
   L.push("A EMPRESA");
-  d.empresa.forEach(b=>{const lab=b.tipo==="doc"?`${b.midias} arquivo(s)`:(b.status?STLBL[b.status].toUpperCase():"PENDENTE");
+  d.empresa.forEach(b=>{const lab=b.tipo==="doc"?`${b.midias} arquivo(s)`:(b.midias?`${b.midias} foto(s)`:"sem registro");
     L.push(` ${b.label}: [${lab}]${b.nota?" — "+b.nota:""}`);});
   L.push("");L.push("PRODUTOS");
   d.itens.forEach(it=>{L.push(` • ${it.rotulo}${it.alvo?" (ALVO)":""}`);
     const sni=v=>v===true?"Sim":(v===false?"Não":"—");
     L.push(`   MOQ: ${it.moq!=null?it.moq+" un":"—"}  ·  Amostra: ${sni(it.tem_amostra)}  ·  Ficha técnica: ${it.ficha_tecnica?it.ficha_tecnica+" arq.":"—"}`);
-    it.slots.forEach(s=>L.push(`   ${s.critico?"★":"○"} ${s.label.split(":")[0]}: [${s.status?STLBL[s.status].toUpperCase():"PENDENTE"}] ${s.midias.filter(m=>m.valida).length} mídia(s)`));});
+    it.slots.forEach(s=>{const nm=s.midias.filter(m=>m.valida).length;L.push(`   ${s.critico?"★":"○"} ${s.label.split(":")[0]}: [${nm?nm+" foto(s)":"sem registro"}]${s.nota?" — "+s.nota:""}`);});});
   L.push("");L.push("Gerado "+new Date().toLocaleString("pt-BR"));return L.join("\n");}
 
 $("btnGravar").onclick=()=>{
@@ -1031,7 +1009,7 @@ async function flushQueue(){
       await fetch(`${SUPA_URL}/rest/v1/agch_visita`,{method:"POST",headers:H,
         body:JSON.stringify({id:visitaId,fornecedor_id:sid,agente:state.session.email,status:"recebida",recebido_em:new Date().toISOString()})});
       // 3. campos de mídia da empresa (cada campo = um bloco_resposta) + uploads
-      for(const c of CAMPOS_FORN){const st=s.forn[c.k];if(!st||(!st.status&&!(st.media&&st.media.length)))continue;
+      for(const c of CAMPOS_FORN){const st=s.forn[c.k];if(!st||(!(st.media&&st.media.length)&&!(st.note&&st.note.trim())))continue;
         const blocoId=uuid();
         await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
           body:JSON.stringify({id:blocoId,visita_id:visitaId,nivel:"fornecedor",bloco_codigo:c.k,status:st.status||null,nota:st.note||null})});
@@ -1043,7 +1021,7 @@ async function flushQueue(){
           body:JSON.stringify({id:itemId,visita_id:visitaId,tipo_item:it.tipo,rotulo_item:it.rotulo,is_alvo:it.is_alvo,
             moq:(it.moq==null?null:it.moq),tem_amostra:(it.tem_amostra==null?null:it.tem_amostra)})});
         const cc=catBy(it.tipo);const blocosItem=(cc?cc.slots.slice():[]).concat([{cod:"ficha_tecnica"}]);
-        for(const sl of blocosItem){const st=it.blocos[sl.cod];if(!st||(!st.status&&!(st.media&&st.media.length)))continue;
+        for(const sl of blocosItem){const st=it.blocos[sl.cod];if(!st||(!(st.media&&st.media.length)&&!(st.note&&st.note.trim())))continue;
           const blocoId=uuid();
           await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
             body:JSON.stringify({id:blocoId,visita_id:visitaId,validacao_item_id:itemId,nivel:"item",bloco_codigo:sl.cod,status:st.status||null,nota:st.note||null})});

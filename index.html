@@ -26,6 +26,13 @@
   .sync{font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;border:1px solid var(--line);color:var(--muted)}
   .sync.on{color:var(--green-bright);border-color:var(--deep)}
   .sync.off{color:var(--amber);border-color:#3a2e0e}
+  .userbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:14px 0 2px}
+  .userbar .who{font-size:.9rem;color:var(--muted)}
+  .userbar .who b{color:var(--accent);font-weight:700}
+  .linkbtn{background:none;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:6px 11px;font-size:.78rem;font-weight:600;cursor:pointer}
+  .linkbtn:hover{color:var(--ink)}
+  .dosswho{font-size:.78rem;color:var(--muted);padding:0 0 8px;border-bottom:1px solid var(--line);margin:-4px 0 10px}
+  .dosswho b{color:var(--accent)}
   .progbar{height:3px;background:#0a130e}.progbar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s}
 
   h2.sec{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin:16px 2px 8px;font-weight:800}
@@ -162,6 +169,7 @@
 
 <!-- ===== LISTA ===== -->
 <div class="wrap hidden" id="vList">
+  <div class="userbar"><span class="who">Conectado como <b id="userTag">—</b></span><button class="linkbtn" id="btnLogout">Sair / trocar usuário</button></div>
   <h2 class="sec">Indústrias para validar</h2>
   <button class="addbtn" id="btnNew">+ Sugerir / cadastrar fornecedor</button>
   <div id="list"></div>
@@ -223,13 +231,14 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.9
+   AGENTE CHINA — App de campo · Selecta Solution · v2.10
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
    v2.7: ids gerados no cliente (uuid) + envio INSERT-only; pré-requisito do RLS por papel no banco.
    v2.8: agente envia dossiê de fornecedor atribuído pela Selecta (remote) — Assistente atribui, agente coleta+envia, Assistente valida.
    v2.9: trava anti-duplicata no cadastro — bloqueia recadastro de fornecedor já verificado (recebido/validado), nos dois logins.
+   v2.10: identidade amigável (Selecta Solution / Bruno) no topo + "cadastrado por" discreto no dossiê + botão Sair/Trocar usuário.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -438,6 +447,19 @@ function ensureAlvoItem(s){
   }
 }
 $("btnBack").onclick=()=>{renderList();show("vList");};
+$("btnLogout").onclick=async()=>{
+  const pend=Object.values(state.suppliers).some(x=>x.pendingSync);
+  if(pend&&navigator.onLine){try{await flushQueue();}catch(e){}}
+  const aindaPend=Object.values(state.suppliers).some(x=>x.pendingSync);
+  if(aindaPend){ if(!confirm("Há coleta ainda não enviada que pode se perder ao sair. Sair mesmo assim?"))return; }
+  else { if(!confirm("Sair desta conta?"))return; }
+  stopPolling();
+  token=null; state.session=null; state.suppliers={};
+  await saveState();
+  const el=$("userTag"); if(el)el.textContent="—";
+  $("li_email").value=""; $("li_pass").value="";
+  show("vLogin");
+};
 
 function renderFornBlocos(){
   ensureQual(current);
@@ -818,6 +840,9 @@ function authHmin(){if(!token&&state.session)token=state.session.token;
 function uuid(){return (window.crypto&&crypto.randomUUID)?crypto.randomUUID():"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{const r=Math.random()*16|0,v=c==="x"?r:(r&0x3|0x8);return v.toString(16);});}
 function novoFlag(s){return s.status==="recebido"&&!s.visto;}
 function isAgente(){return (((state.session&&state.session.email)||"")).includes("aimportshop");}
+function nomeUsuario(){return isAgente()?"Bruno":"Selecta Solution";}
+function nomeOrigem(o){return o==="agente"?"Bruno":"Selecta Solution";}
+function aplicarUsuario(){const el=$("userTag");if(el)el.textContent=nomeUsuario();}
 
 // cria o fornecedor no servidor uma única vez (cadastro sobe na hora); guarda serverId
 async function pushFornecedor(s){
@@ -879,7 +904,7 @@ function blocoDossHtml(label,b,mds,signed){
 }
 async function verDossie(s){
   const ov=document.createElement("div");ov.className="modelov";
-  ov.innerHTML=`<div class="dossbox"><div class="dossh"><b>${esc(s.nome)}</b><span class="dossclose" data-x>✕</span></div><div class="dossbody" data-body><p class="hint">Carregando dossiê do servidor…</p></div></div>`;
+  ov.innerHTML=`<div class="dossbox"><div class="dossh"><b>${esc(s.nome)}</b><span class="dossclose" data-x>✕</span></div><div class="dosswho">Cadastrado por: <b>${esc(nomeOrigem(s.origem))}</b></div><div class="dossbody" data-body><p class="hint">Carregando dossiê do servidor…</p></div></div>`;
   ov.querySelector("[data-x]").onclick=()=>ov.remove();
   ov.onclick=e=>{if(e.target===ov)ov.remove();};
   document.body.appendChild(ov);
@@ -927,6 +952,7 @@ async function verDossie(s){
 
 // atualização automática enquanto o app está aberto e visível
 let pollTimer=null;
+function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
 function startPolling(){
   if(pollTimer)clearInterval(pollTimer);
   pollTimer=setInterval(()=>{if(!document.hidden&&navigator.onLine){pullFornecedores();flushQueue();}},20000);
@@ -998,12 +1024,12 @@ function esc(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":
 /* =========================== boot =========================== */
 $("li_btn").onclick=async()=>{
   $("li_err").textContent="";
-  try{await doLogin($("li_email").value.trim(),$("li_pass").value);renderList();show("vList");flushQueue();pullFornecedores();startPolling();}
+  try{await doLogin($("li_email").value.trim(),$("li_pass").value);aplicarUsuario();renderList();show("vList");flushQueue();pullFornecedores();startPolling();}
   catch(e){$("li_err").textContent=e.message;}
 };
 (async function(){
   await openDB();await loadState();syncBadge();
-  if(state.session&&state.session.token){token=state.session.token;renderList();show("vList");if(navigator.onLine){flushQueue();pullFornecedores();}startPolling();}
+  if(state.session&&state.session.token){token=state.session.token;aplicarUsuario();renderList();show("vList");if(navigator.onLine){flushQueue();pullFornecedores();}startPolling();}
   else show("vLogin");
 })();
 </script>

@@ -223,11 +223,13 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.7
+   AGENTE CHINA — App de campo · Selecta Solution · v2.9
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
    v2.7: ids gerados no cliente (uuid) + envio INSERT-only; pré-requisito do RLS por papel no banco.
+   v2.8: agente envia dossiê de fornecedor atribuído pela Selecta (remote) — Assistente atribui, agente coleta+envia, Assistente valida.
+   v2.9: trava anti-duplicata no cadastro — bloqueia recadastro de fornecedor já verificado (recebido/validado), nos dois logins.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -403,6 +405,11 @@ $("btnNew").onclick=()=>{fillAlvoSelect();$("mNew").classList.add("show");};
 $("nf_cancel").onclick=()=>$("mNew").classList.remove("show");
 $("nf_save").onclick=async()=>{
   const nome=$("nf_nome").value.trim();if(!nome){alert("Informe o nome.");return;}
+  // trava anti-duplicata — bloqueia recadastro de fornecedor JÁ VERIFICADO (recebido/validado). Vale p/ os dois logins.
+  const normNome=s=>(s||"").toString().toLowerCase().replace(/[\s.,;:!?'"`´^~()\[\]{}<>\-_/\\|&@#$%*+=]+/g,"");
+  const alvoNorm=normNome(nome);
+  const jaVerificado=Object.values(state.suppliers).some(x=>normNome(x.nome)===alvoNorm&&(x.status==="recebido"||x.status==="validado"));
+  if(jaVerificado){alert("Fornecedor já cadastrado, consultar base.");return;}
   const id="loc_"+Date.now();
   const s={id,serverId:null,nome,cidade:$("nf_cidade").value.trim(),origem:(state.session.email||"").includes("aimportshop")?"agente":"selecta",
     alvo:$("nf_alvo").value||null,status:"nao_iniciado",visto:true,qual:{carater:"",exporta_brasil:null,homologado:null},forn:{},itens:[]};
@@ -931,8 +938,8 @@ async function flushQueue(){
   if(!token||!navigator.onLine)return;
   const H=authHmin();
   for(const s of Object.values(state.suppliers)){
-    if(s.remote)continue;                 // veio do servidor; nada a enviar daqui
-    const sid=await pushFornecedor(s);     // garante que o fornecedor existe no servidor (cadastro)
+    if(s.remote&&!s.pendingSync)continue;  // remote sem coleta pendente: nada a enviar (com coleta, o agente envia o dossiê do alvo atribuído pela Selecta)
+    const sid=await pushFornecedor(s);     // garante o fornecedor no servidor (remote já tem serverId; não duplica)
     if(!s.pendingSync)continue;            // só envia o dossiê de quem gravou+confirmou
     if(!sid)continue;                      // ainda sem internet; tenta na próxima
     try{

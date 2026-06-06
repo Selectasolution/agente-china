@@ -71,6 +71,9 @@
   .fhead h1{margin:0 0 2px;font-size:19px}.fhead .meta{font-size:12px;color:var(--muted)}
   .alvo{margin:10px 0 0;background:var(--deep);border-radius:9px;padding:9px 11px;font-size:13px}
   .alvo b{color:var(--green-bright)}
+  .delbtn{margin-top:10px;background:transparent;border:1px solid var(--bad);color:#fca5a5;border-radius:8px;padding:8px 12px;font-size:.8rem;font-weight:700;cursor:pointer}
+  .delbtn:active{transform:translateY(1px)}
+  .delbtn.hidden{display:none!important}
   .backbtn{background:transparent;border:1.5px solid var(--line);color:var(--muted);border-radius:8px;padding:6px 11px;font-size:12px;font-weight:700;cursor:pointer}
   .step{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:0 0 11px;overflow:hidden}
   .step.crit{border-color:var(--deep);border-width:1.5px}
@@ -185,6 +188,7 @@
   <div class="card fhead">
     <h1 id="fName">—</h1><div class="meta" id="fMeta">—</div>
     <div class="alvo" id="fAlvo"></div>
+    <button class="delbtn hidden" id="btnExcluir">Excluir fornecedor</button>
   </div>
   <h2 class="sec">A fábrica</h2>
   <div id="fornBlocos"></div>
@@ -243,6 +247,7 @@
    v2.9: trava anti-duplicata no cadastro — bloqueia recadastro de fornecedor já verificado (recebido/validado), nos dois logins.
    v2.10: identidade amigável (Selecta Solution / Bruno) no topo + "cadastrado por" discreto no dossiê + botão Sair/Trocar usuário.
    v2.11: Sair NUNCA apaga coleta não enviada + armazenamento persistente (anti-despejo) + aviso "N coletas aguardando envio".
+   v2.12: botão Excluir fornecedor (só Selecta) na tela do cadastro, com confirmação Sim/Não — apaga no servidor e localmente.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -443,6 +448,7 @@ function openSup(id){current=state.suppliers[id];
   $("fAlvo").innerHTML=(current.remote&&current.status==="recebido")
     ? '<span style="color:var(--muted)">Relatório enviado de outro aparelho — as evidências ficam no servidor, não neste dispositivo. A análise é feita por fora; aqui você marca validado na lista.</span>' : "";
   ensureAlvoItem(current);
+  const del=$("btnExcluir");if(del){del.classList.toggle("hidden",isAgente());del.onclick=()=>excluirFornecedor(current);}
   renderFornBlocos();renderItens();show("vSup");refreshProg();}
 /* o produto-alvo nasce na lista de validação (primeiro, com selo "alvo"); os demais entram depois */
 function ensureAlvoItem(s){
@@ -590,6 +596,36 @@ function buildItemSlots(box,it,c){
   box.appendChild(fichaTecnicaEl(it));
   // MOQ + amostra (fim do card)
   box.appendChild(moqAmostraEl(it));
+}
+/* diálogo de confirmação Sim/Não (overlay próprio — não usa o confirm do navegador) */
+function confirmar(msg){
+  return new Promise(res=>{
+    const ov=document.createElement("div");ov.className="modelov";
+    ov.innerHTML=`<div class="modelobox"><div class="modeloh">${esc(msg)}</div>
+      <div style="display:flex;gap:10px;margin-top:16px">
+        <button class="gen" data-sim style="flex:1">Sim</button>
+        <button class="btn sec" data-nao style="flex:1">Não</button></div></div>`;
+    ov.querySelector("[data-sim]").onclick=()=>{ov.remove();res(true);};
+    ov.querySelector("[data-nao]").onclick=()=>{ov.remove();res(false);};
+    ov.onclick=e=>{if(e.target===ov){ov.remove();res(false);}};
+    document.body.appendChild(ov);
+  });
+}
+/* exclusão de fornecedor — SÓ Selecta. Apaga no servidor (se houver) e localmente. */
+async function excluirFornecedor(s){
+  if(isAgente()){alert("Só a Selecta pode excluir fornecedores.");return;}
+  if(!await confirmar("Certeza da exclusão? Esta ação não pode ser desfeita."))return;
+  if(s.serverId){
+    if(!navigator.onLine){alert("Você está offline. Conecte para excluir do servidor.");return;}
+    try{
+      const r=await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${s.serverId}`,{method:"DELETE",headers:authH()});
+      if(!r.ok){alert("Não foi possível excluir no servidor (pode haver dossiê vinculado). Nada foi removido.");return;}
+    }catch(e){alert("Falha de conexão ao excluir no servidor. Nada foi removido.");return;}
+  }
+  delete state.suppliers[s.id];
+  await saveState();
+  current=null;
+  renderList();show("vList");
 }
 /* foto-modelo ampliada (lightbox); se a imagem ainda não existe, mostra "a definir" */
 function showModelo(url,titulo){

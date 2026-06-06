@@ -1181,7 +1181,7 @@ async function verDossie(s){
     let signed={};
     if(paths.length){
       const sr=await fetch(`${SUPA_URL}/storage/v1/object/sign/agch-midias`,{method:"POST",headers:H,body:JSON.stringify({expiresIn:3600,paths})});
-      if(sr.ok){const arr=await sr.json();arr.forEach(o=>{if(o.signedURL)signed[o.path]=SUPA_URL+o.signedURL;});}
+      if(sr.ok){const arr=await sr.json();arr.forEach(o=>{const u=o.signedURL||o.signedUrl;if(u)signed[o.path]=(u.indexOf("http")===0)?u:SUPA_URL+((u.indexOf("/storage/")===0)?"":"/storage/v1")+u;});}
     }
     const mById={};midias.forEach(m=>{(mById[m.bloco_resposta_id]=mById[m.bloco_resposta_id]||[]).push(m);});
     const relBlocos=blocos.filter(b=>b.visita_id===relVisita.id);

@@ -195,7 +195,7 @@
 <div class="wrap hidden" id="vList">
   <div class="userbar"><span class="who">Conectado como <b id="userTag">—</b></span><button class="linkbtn" id="btnLogout">Sair / trocar usuário</button></div>
   <div id="pendAviso" class="pendaviso hidden"></div>
-  <h2 class="sec">Indústrias</h2>
+  <h2 class="sec">Fornecedores</h2>
   <div class="abas">
     <button class="aba on" data-aba="validar">A validar</button>
     <button class="aba" data-aba="aprovados">Aprovados</button>
@@ -203,7 +203,7 @@
   </div>
   <button class="addbtn" id="btnNew">+ Sugerir / cadastrar fornecedor</button>
   <div id="list"></div>
-  <p class="hint">Toque numa indústria para abrir. Tudo salvo neste aparelho.</p>
+  <p class="hint">Toque num fornecedor para abrir. Tudo salvo neste aparelho.</p>
 </div>
 
 <!-- ===== FORNECEDOR ===== -->
@@ -445,7 +445,7 @@ function renderList(){
     b.classList.toggle("on",k===abaAtual);
   });
   const arr=todos.filter(s=>abaDe(s)===abaAtual);
-  if(!arr.length){el.innerHTML='<p class="hint">'+(abaAtual==="validar"?"Nenhuma indústria na fila. Cadastre uma acima.":"Nada aqui ainda.")+'</p>';}
+  if(!arr.length){el.innerHTML='<p class="hint">'+(abaAtual==="validar"?"Nenhum fornecedor na fila. Cadastre um acima.":"Nada aqui ainda.")+'</p>';}
   else{
     arr.sort((a,b)=>(novoFlag(b)?1:0)-(novoFlag(a)?1:0));   // novos primeiro
     arr.forEach(s=>{

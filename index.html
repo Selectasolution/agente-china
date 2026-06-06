@@ -33,6 +33,8 @@
   .linkbtn:hover{color:var(--ink)}
   .dosswho{font-size:.78rem;color:var(--muted);padding:0 0 8px;border-bottom:1px solid var(--line);margin:-4px 0 10px}
   .dosswho b{color:var(--accent)}
+  .pendaviso{background:rgba(245,158,11,.12);border:1px solid var(--amber);color:var(--amber);border-radius:10px;padding:8px 12px;font-size:.85rem;font-weight:600;margin:8px 0 2px}
+  .pendaviso.hidden{display:none}
   .progbar{height:3px;background:#0a130e}.progbar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s}
 
   h2.sec{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin:16px 2px 8px;font-weight:800}
@@ -170,6 +172,7 @@
 <!-- ===== LISTA ===== -->
 <div class="wrap hidden" id="vList">
   <div class="userbar"><span class="who">Conectado como <b id="userTag">—</b></span><button class="linkbtn" id="btnLogout">Sair / trocar usuário</button></div>
+  <div id="pendAviso" class="pendaviso hidden"></div>
   <h2 class="sec">Indústrias para validar</h2>
   <button class="addbtn" id="btnNew">+ Sugerir / cadastrar fornecedor</button>
   <div id="list"></div>
@@ -231,7 +234,7 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.10
+   AGENTE CHINA — App de campo · Selecta Solution · v2.11
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
@@ -239,6 +242,7 @@
    v2.8: agente envia dossiê de fornecedor atribuído pela Selecta (remote) — Assistente atribui, agente coleta+envia, Assistente valida.
    v2.9: trava anti-duplicata no cadastro — bloqueia recadastro de fornecedor já verificado (recebido/validado), nos dois logins.
    v2.10: identidade amigável (Selecta Solution / Bruno) no topo + "cadastrado por" discreto no dossiê + botão Sair/Trocar usuário.
+   v2.11: Sair NUNCA apaga coleta não enviada + armazenamento persistente (anti-despejo) + aviso "N coletas aguardando envio".
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -402,6 +406,9 @@ function renderList(){
       }
       openSup(s.id);
     };el.appendChild(c);});
+  const pend=Object.values(state.suppliers).filter(x=>x.pendingSync).length;
+  const pe=$("pendAviso");
+  if(pe){if(pend>0){pe.textContent="⏳ "+pend+" coleta(s) aguardando envio — sobem sozinhas quando houver internet.";pe.classList.remove("hidden");}else{pe.classList.add("hidden");}}
 }
 function campoDone(s,c){const st=s.forn&&s.forn[c.k];if(!st)return false;return c.tipo==="doc"?!!(st.media&&st.media.length):!!st.status;}
 function blocosDoneForn(s){return CAMPOS_FORN.filter(c=>campoDone(s,c)).length;}
@@ -448,13 +455,12 @@ function ensureAlvoItem(s){
 }
 $("btnBack").onclick=()=>{renderList();show("vList");};
 $("btnLogout").onclick=async()=>{
+  if(!confirm("Sair desta conta? A coleta ainda não enviada continua salva neste aparelho e sobe sozinha quando houver internet."))return;
   const pend=Object.values(state.suppliers).some(x=>x.pendingSync);
   if(pend&&navigator.onLine){try{await flushQueue();}catch(e){}}
-  const aindaPend=Object.values(state.suppliers).some(x=>x.pendingSync);
-  if(aindaPend){ if(!confirm("Há coleta ainda não enviada que pode se perder ao sair. Sair mesmo assim?"))return; }
-  else { if(!confirm("Sair desta conta?"))return; }
   stopPolling();
-  token=null; state.session=null; state.suppliers={};
+  token=null; state.session=null;
+  for(const k of Object.keys(state.suppliers)){ if(!temColeta(state.suppliers[k])) delete state.suppliers[k]; }
   await saveState();
   const el=$("userTag"); if(el)el.textContent="—";
   $("li_email").value=""; $("li_pass").value="";
@@ -843,6 +849,15 @@ function isAgente(){return (((state.session&&state.session.email)||"")).includes
 function nomeUsuario(){return isAgente()?"Bruno":"Selecta Solution";}
 function nomeOrigem(o){return o==="agente"?"Bruno":"Selecta Solution";}
 function aplicarUsuario(){const el=$("userTag");if(el)el.textContent=nomeUsuario();}
+function temColeta(s){
+  if(s.pendingSync)return true;            // dossiê gerado, aguardando envio
+  if(!s.remote)return true;                // criado localmente (pode não ter subido)
+  const blocos=[...Object.values(s.forn||{}),...((s.itens||[]).flatMap(it=>Object.values(it.blocos||{})))];
+  if(blocos.some(b=>b&&(b.status||(b.media&&b.media.length))))return true;  // tem foto/status coletado
+  const q=s.qual||{};
+  if(q.carater||q.exporta_brasil!=null||q.homologado!=null)return true;
+  return false;                            // cópia pura do servidor: descartável (recarrega no pull)
+}
 
 // cria o fornecedor no servidor uma única vez (cadastro sobe na hora); guarda serverId
 async function pushFornecedor(s){
@@ -998,7 +1013,7 @@ async function flushQueue(){
             body:JSON.stringify({id:blocoId,visita_id:visitaId,validacao_item_id:itemId,nivel:"item",bloco_codigo:sl.cod,status:st.status||null,nota:st.note||null})});
           await uploadMedias(st.media,blocoId,visitaId,H,sl.cod);}
       }
-      s.pendingSync=false;s.status="recebido";await saveState();
+      s.pendingSync=false;s.status="recebido";await saveState();renderList();
     }catch(e){console.warn("sync adiado:",e);/* fica na fila; tenta de novo quando online */}
   }
   renderList();
@@ -1029,6 +1044,7 @@ $("li_btn").onclick=async()=>{
 };
 (async function(){
   await openDB();await loadState();syncBadge();
+  try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
   if(state.session&&state.session.token){token=state.session.token;aplicarUsuario();renderList();show("vList");if(navigator.onLine){flushQueue();pullFornecedores();}startPolling();}
   else show("vLogin");
 })();

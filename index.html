@@ -62,6 +62,13 @@
   .pill{font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:20px;background:#0f1c15;color:var(--muted);border:1px solid var(--line)}
   .pill.go{color:var(--amber);border-color:#3a2e0e}.pill.done{color:var(--green-bright);border-color:var(--deep)}
   .pill.recv{color:#7dd3fc;border-color:#0c4a6e;background:#08222e}
+  .pill.bad{color:#fca5a5;border-color:#7f1d1d;background:#240c0c}
+  .abas{display:flex;gap:6px;margin:2px 0 12px}
+  .aba{flex:1;background:transparent;border:1px solid var(--line);color:var(--muted);padding:9px 4px;border-radius:9px;font-size:12.5px;font-weight:800;cursor:pointer}
+  .aba.on{background:var(--panel2);color:var(--ink);border-color:var(--accent)}
+  .resultadobox{font-weight:800;padding:10px;border-radius:9px;text-align:center;margin:6px 0}
+  .resultadobox.apr{background:#0c2417;color:var(--green-bright);border:1px solid var(--green-bright)}
+  .resultadobox.rep{background:#240c0c;color:#fca5a5;border:1px solid var(--bad)}
   .supcard.novo{border-color:var(--green-bright);box-shadow:0 0 0 1px var(--green-bright) inset}
   .badge-novo{display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--bg);background:var(--green-bright);padding:2px 7px;border-radius:5px;margin-right:6px}
   .valbtn{font-size:11px;font-weight:800;padding:5px 11px;border:1px solid var(--green-bright);border-radius:8px;background:#0c2417;color:var(--green-bright);cursor:pointer;margin-left:6px}
@@ -188,10 +195,15 @@
 <div class="wrap hidden" id="vList">
   <div class="userbar"><span class="who">Conectado como <b id="userTag">—</b></span><button class="linkbtn" id="btnLogout">Sair / trocar usuário</button></div>
   <div id="pendAviso" class="pendaviso hidden"></div>
-  <h2 class="sec">Indústrias para validar</h2>
+  <h2 class="sec">Indústrias</h2>
+  <div class="abas">
+    <button class="aba on" data-aba="validar">A validar</button>
+    <button class="aba" data-aba="aprovados">Aprovados</button>
+    <button class="aba" data-aba="reprovados">Reprovados</button>
+  </div>
   <button class="addbtn" id="btnNew">+ Sugerir / cadastrar fornecedor</button>
   <div id="list"></div>
-  <p class="hint">Toque numa indústria para validar. Tudo salvo neste aparelho.</p>
+  <p class="hint">Toque numa indústria para abrir. Tudo salvo neste aparelho.</p>
 </div>
 
 <!-- ===== FORNECEDOR ===== -->
@@ -415,33 +427,55 @@ window.addEventListener("online",()=>{syncBadge();flushQueue();flushComplementos
 window.addEventListener("offline",syncBadge);
 
 /* =========================== lista de fornecedores =========================== */
+let abaAtual="validar";
+function abaDe(s){
+  if(s.status==="aprovado"||s.status==="validado")return "aprovados";   // "validado" legado = aprovado
+  if(s.status==="reprovado")return "reprovados";
+  return "validar";  // a visitar / em coleta / recebido / complemento
+}
 function renderList(){
   const el=$("list");el.innerHTML="";
-  const arr=Object.values(state.suppliers);
-  if(!arr.length){el.innerHTML='<p class="hint">Nenhum fornecedor ainda. Cadastre o primeiro acima.</p>';return;}
-  arr.sort((a,b)=>(novoFlag(b)?1:0)-(novoFlag(a)?1:0));   // relatórios novos primeiro
-  arr.forEach(s=>{
-    const novo=novoFlag(s);
-    const done=blocosDoneForn(s)+(s.itens||[]).filter(i=>itemDone(i)).length;
-    let pill='<span class="pill">a visitar</span>';
-    if(s.status==="validado")pill='<span class="pill done">validado</span>';
-    else if(s.status==="complemento")pill='<span class="pill go">complemento solicitado</span>';
-    else if(s.status==="recebido")pill='<span class="pill recv">relatório recebido</span>';
-    else if(done>0)pill='<span class="pill go">em validação</span>';
-    const c=document.createElement("div");c.className="card supcard"+(novo?" novo":"");
-    const valBtn=((s.status==="recebido"||s.status==="complemento")&&!isAgente())?'<button class="valbtn" data-val>✓ validar</button>':"";
-    c.innerHTML=`<div class="pin">🏭</div><div class="ci"><b>${esc(s.nome)}</b><span>${esc(s.cidade||"—")} · ${(s.itens||[]).length} produto(s)</span></div>${novo?'<span class="badge-novo">novo</span>':''}${pill}${valBtn}`;
-    const vb=c.querySelector("[data-val]");if(vb)vb.addEventListener("click",ev=>{ev.stopPropagation();markValidado(s);});
-    c.onclick=()=>{
-      if(s.status==="recebido"||s.status==="validado"||s.status==="complemento"){
-        if(isAgente()){
-          if(s.status==="validado"){alert("Relatório validado pela Selecta.");return;}
-          abrirComplemento(s);return;
+  const todos=Object.values(state.suppliers);
+  // contadores nas abas
+  const cont={validar:0,aprovados:0,reprovados:0};
+  todos.forEach(s=>cont[abaDe(s)]++);
+  document.querySelectorAll(".aba").forEach(b=>{
+    const k=b.dataset.aba;const base={validar:"A validar",aprovados:"Aprovados",reprovados:"Reprovados"}[k];
+    b.textContent=base+(cont[k]?" ("+cont[k]+")":"");
+    b.classList.toggle("on",k===abaAtual);
+  });
+  const arr=todos.filter(s=>abaDe(s)===abaAtual);
+  if(!arr.length){el.innerHTML='<p class="hint">'+(abaAtual==="validar"?"Nenhuma indústria na fila. Cadastre uma acima.":"Nada aqui ainda.")+'</p>';}
+  else{
+    arr.sort((a,b)=>(novoFlag(b)?1:0)-(novoFlag(a)?1:0));   // novos primeiro
+    arr.forEach(s=>{
+      const novo=novoFlag(s);
+      const done=blocosDoneForn(s)+(s.itens||[]).filter(i=>itemDone(i)).length;
+      let pill='<span class="pill">a visitar</span>';
+      if(s.status==="aprovado"||s.status==="validado")pill='<span class="pill done">aprovado</span>';
+      else if(s.status==="reprovado")pill='<span class="pill bad">reprovado</span>';
+      else if(s.status==="complemento")pill='<span class="pill go">complemento solicitado</span>';
+      else if(s.status==="recebido")pill='<span class="pill recv">relatório recebido</span>';
+      else if(done>0)pill='<span class="pill go">em validação</span>';
+      // motivo da reprovação: só a Selecta vê, só na aba reprovados
+      const motivo=(!isAgente()&&s.status==="reprovado"&&s.motivoReprovacao)?` · motivo: ${esc(s.motivoReprovacao)}`:"";
+      const c=document.createElement("div");c.className="card supcard"+(novo?" novo":"");
+      c.innerHTML=`<div class="pin">🏭</div><div class="ci"><b>${esc(s.nome)}</b><span>${esc(s.cidade||"—")} · ${(s.itens||[]).length} produto(s)${motivo}</span></div>${novo?'<span class="badge-novo">novo</span>':''}${pill}`;
+      c.onclick=()=>{
+        const st=s.status;
+        if(st==="aprovado"||st==="validado"||st==="reprovado"){
+          if(isAgente())resumoLocalView(s); else verDossie(s);
+          return;
         }
-        verDossie(s);return;
-      }
-      openSup(s.id);
-    };el.appendChild(c);});
+        if(st==="recebido"||st==="complemento"){
+          if(isAgente())abrirComplemento(s); else verDossie(s);
+          return;
+        }
+        openSup(s.id);
+      };
+      el.appendChild(c);
+    });
+  }
   const pend=Object.values(state.suppliers).filter(x=>x.pendingSync).length;
   const pe=$("pendAviso");
   if(pe){if(pend>0){pe.textContent="⏳ "+pend+" coleta(s) aguardando envio — sobem sozinhas quando houver internet.";pe.classList.remove("hidden");}else{pe.classList.add("hidden");}}
@@ -449,6 +483,8 @@ function renderList(){
 function campoDone(s,c){const st=s.forn&&s.forn[c.k];if(!st)return false;return c.tipo==="doc"?!!(st.media&&st.media.length):(!!(st.media&&st.media.length)||!!(st.note&&st.note.trim()));}
 function blocosDoneForn(s){return CAMPOS_FORN.filter(c=>campoDone(s,c)).length;}
 function itemDone(i){return Object.values(i.blocos).some(b=>b&&((b.media&&b.media.length)||(b.note&&b.note.trim())));}
+// troca de aba (A validar / Aprovados / Reprovados)
+document.querySelectorAll(".aba").forEach(b=>b.addEventListener("click",()=>{abaAtual=b.dataset.aba;renderList();}));
 
 /* novo fornecedor */
 function fillAlvoSelect(){const sel=$("nf_alvo");sel.innerHTML='<option value="">— escolher produto-alvo —</option>'+
@@ -1044,8 +1080,10 @@ async function pullFornecedores(){
         const visitas=await vr.json();
         const comRelatorio=new Set(visitas.filter(v=>v.status!=="complemento").map(v=>v.fornecedor_id));
         for(const s of Object.values(state.suppliers)){
-          if(s.serverId&&comRelatorio.has(s.serverId)&&!["validado","reprovado","complemento","recebido"].includes(s.status)){
+          if(s.serverId&&comRelatorio.has(s.serverId)&&!["aprovado","validado","reprovado","complemento","recebido"].includes(s.status)){
             s.status="recebido"; s.visto=false; changed=true;
+            // grava "recebido" no servidor para o Bruno também enxergar (a Selecta tem permissão total)
+            try{await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${s.serverId}`,"PATCH",{status:"recebido"});}catch(e){}
           }
         }
       }
@@ -1054,11 +1092,69 @@ async function pullFornecedores(){
   }catch(e){console.warn("pull adiado",e);}
 }
 
-// Selecta marca o fornecedor como validado (depois de cruzar os dados por fora)
-async function markValidado(s){
-  s.status="validado";s.visto=true;await saveState();renderList();
-  const sid=await pushFornecedor(s);
-  if(sid&&navigator.onLine){await ensureFreshToken();try{await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,"PATCH",{status:"validado"});}catch(e){console.warn("validado adiado",e);}}
+// Selecta APROVA — só marca local DEPOIS que o servidor confirma (e mostra o erro real se falhar)
+async function markAprovado(s){
+  if(!navigator.onLine){alert("Sem internet. Conecte para aprovar.");return false;}
+  const sid=s.serverId||await pushFornecedor(s);
+  if(!sid){alert("Não encontrei este fornecedor no servidor. Tente de novo.");return false;}
+  await ensureFreshToken();
+  let r=null;try{r=await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,"PATCH",{status:"aprovado"});}catch(e){}
+  if(!r||!r.ok){
+    let det="falha de conexão";if(r){det="erro "+r.status;try{const t=((await r.text())||"").slice(0,100);if(t)det+=" — "+t;}catch(e){}}
+    alert("⚠ NÃO consegui gravar a aprovação no servidor ("+det+").\n\nNada foi alterado — tente de novo.");return false;
+  }
+  s.status="aprovado";s.motivoReprovacao="";s.visto=true;await saveState();renderList();return true;
+}
+// Selecta REPROVA — pede motivo (só seu, local) e grava o status no servidor com confirmação
+async function markReprovado(s){
+  if(!navigator.onLine){alert("Sem internet. Conecte para reprovar.");return false;}
+  const motivo=await pedirMotivo();
+  if(motivo===null)return false; // cancelou
+  const sid=s.serverId||await pushFornecedor(s);
+  if(!sid){alert("Não encontrei este fornecedor no servidor. Tente de novo.");return false;}
+  await ensureFreshToken();
+  let r=null;try{r=await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,"PATCH",{status:"reprovado"});}catch(e){}
+  if(!r||!r.ok){
+    let det="falha de conexão";if(r){det="erro "+r.status;try{const t=((await r.text())||"").slice(0,100);if(t)det+=" — "+t;}catch(e){}}
+    alert("⚠ NÃO consegui gravar a reprovação no servidor ("+det+").\n\nNada foi alterado — tente de novo.");return false;
+  }
+  s.status="reprovado";s.motivoReprovacao=motivo||"";s.visto=true;await saveState();renderList();return true;
+}
+// modal de motivo (texto). Retorna string (pode ser "") ou null se cancelar.
+function pedirMotivo(){
+  return new Promise(res=>{
+    const ov=document.createElement("div");ov.className="modelov";
+    ov.innerHTML=`<div class="modelobox"><div class="modeloh">Motivo da reprovação <span class="hint">(só você vê)</span></div>
+      <textarea data-m rows="3" placeholder="Ex.: sem ANATEL · preço fora · sem amostra" style="margin:6px 0"></textarea>
+      <div style="display:flex;gap:10px;margin-top:8px">
+        <button class="gen" data-ok>Reprovar</button>
+        <button class="btn sec" data-c>Cancelar</button></div></div>`;
+    ov.querySelector("[data-ok]").onclick=()=>{const v=ov.querySelector("[data-m]").value.trim();ov.remove();res(v);};
+    ov.querySelector("[data-c]").onclick=()=>{ov.remove();res(null);};
+    ov.onclick=e=>{if(e.target===ov){ov.remove();res(null);}};
+    document.body.appendChild(ov);
+  });
+}
+// resumo (lado Bruno): resultado + achados dele, a partir do que está no aparelho. NUNCA mostra motivo/critério.
+function resumoLocalView(s){
+  const q=s.qual||{};const L=[];
+  L.push("Caráter: "+(q.carater||"—"));
+  L.push("Exporta p/ Brasil: "+sinao(q.exporta_brasil)+" · Homologado: "+sinao(q.homologado));
+  (s.itens||[]).forEach(it=>{
+    const fotos=Object.values(it.blocos||{}).reduce((n,b)=>n+((b&&b.media&&b.media.length)||0),0);
+    L.push("• "+(it.rotulo||it.tipo)+(it.is_alvo?" (ALVO)":"")+" — MOQ: "+(it.moq!=null?it.moq+" un":"—")+" · Amostra: "+sinao(it.tem_amostra)+" · "+fotos+" foto(s)");
+  });
+  const certs=(typeof CERTS!=="undefined"?CERTS:[]).filter(c=>s.certs&&s.certs[c.k]&&s.certs[c.k].tem===true).map(c=>c.t);
+  if(certs.length)L.push("Certificações: "+certs.join(", "));
+  const aprov=(s.status==="aprovado"||s.status==="validado");
+  const ov=document.createElement("div");ov.className="modelov";
+  ov.innerHTML=`<div class="modelobox"><div class="modeloh">${esc(s.nome)}</div>
+    <div class="resultadobox ${aprov?"apr":"rep"}">${aprov?"APROVADO":"REPROVADO"}</div>
+    <div class="hint" style="text-align:left;white-space:pre-wrap;margin:10px 0">${esc(L.join("\n"))}</div>
+    <button class="btn sec" data-x>Fechar</button></div>`;
+  ov.querySelector("[data-x]").onclick=()=>ov.remove();
+  ov.onclick=e=>{if(e.target===ov)ov.remove();};
+  document.body.appendChild(ov);
 }
 
 // ---------- COMPLEMENTO (lado Bruno): arquivo solto, FORA do relatório enviado ----------
@@ -1203,10 +1299,11 @@ async function verDossie(s){
     const conteudo=html.join("")||'<p class="hint">Dossiê vazio.</p>';
     body.innerHTML=conteudo;
     body.querySelectorAll("[data-full]").forEach(img=>img.onclick=()=>showModelo(img.dataset.full,""));
-    foot.innerHTML=`<button class="btn sec" data-pdf>🖨 Baixar PDF</button><button class="btn sec" data-comp>Solicitar complemento</button><button class="gen" data-val>✓ Validar</button>`;
+    foot.innerHTML=`<button class="btn sec" data-pdf>🖨 PDF</button><button class="btn sec" data-comp>Complemento</button><button class="btn sec" data-rep>Reprovar</button><button class="gen" data-apr>✓ Aprovar</button>`;
     foot.querySelector("[data-pdf]").onclick=()=>imprimirDossie(s.nome,conteudo);
     foot.querySelector("[data-comp]").onclick=async()=>{if(await markComplemento(s))ov.remove();};
-    foot.querySelector("[data-val]").onclick=async()=>{await markValidado(s);ov.remove();};
+    foot.querySelector("[data-rep]").onclick=async()=>{if(await markReprovado(s))ov.remove();};
+    foot.querySelector("[data-apr]").onclick=async()=>{if(await markAprovado(s))ov.remove();};
   }catch(e){console.warn("dossiê erro",e);body.innerHTML='<p class="hint">Erro ao carregar. Tente novamente.</p>';}
 }
 function sinao(v){return v===true?"Sim":v===false?"Não":"—";}

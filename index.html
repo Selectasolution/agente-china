@@ -82,6 +82,7 @@
   .certname .zh{font-weight:400}
   .certsub{margin-top:8px}
   .certsub input{margin-bottom:8px}
+  .delitem{background:transparent;border:1px solid var(--bad);color:#fca5a5;border-radius:8px;padding:7px 11px;font-size:13px;font-weight:800;cursor:pointer;line-height:1}
   .backbtn{background:transparent;border:1.5px solid var(--line);color:var(--muted);border-radius:8px;padding:6px 11px;font-size:12px;font-weight:700;cursor:pointer}
   .step{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:0 0 11px;overflow:hidden}
   .step.crit{border-color:var(--deep);border-width:1.5px}
@@ -118,6 +119,8 @@
   .modeloimg{min-height:80px;display:flex;align-items:center;justify-content:center}
   .dossbox{max-width:560px;width:100%;max-height:86vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
   .dossh{display:flex;justify-content:space-between;align-items:center;font-size:16px;margin-bottom:6px;position:sticky;top:-16px;background:var(--panel);padding-top:4px}
+  .dossfoot{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid var(--line);position:sticky;bottom:-16px;background:var(--panel);padding-bottom:2px}
+  .dossfoot .btn,.dossfoot .gen{flex:1;min-width:120px;width:auto;padding:11px}
   .dossclose{cursor:pointer;color:var(--muted);font-size:18px;padding:0 6px}
   .dosssec{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--green-bright);margin:14px 0 4px;border-top:1px solid var(--line);padding-top:10px}
   .dossmeta{font-size:12.5px;color:var(--muted);margin-bottom:6px}
@@ -258,6 +261,7 @@
    v2.12: botão Excluir fornecedor (só Selecta) na tela do cadastro, com confirmação Sim/Não — apaga no servidor e localmente.
    v2.13: inteligência silenciosa — removido o veredito (OK/Atenção/Reprova) do app do agente. Bruno só CAPTURA (foto/anexo) + observação livre ("achado importante"). Avaliação de valor é 100% da Selecta, por fora. Bloco conta como coletado por foto OU observação.
    v2.14: quadro de certificações da fábrica (ANATEL, INMETRO, FCC, CE, RoHS, ISO 9001, CCC, UL) no bloco de documentação. Bruno constata in loco o que existe → "Tem" abre campo "quais itens" + anexo do documento. Captura/confirmação de fato; análise é interna.
+   v2.15: excluir produto da lista de validação (botão ✕ por item, exceto o alvo) com confirmação Sim/Não — corrige equívoco de item adicionado errado.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -406,7 +410,7 @@ function show(view){["vLogin","vList","vSup"].forEach(v=>$(v).classList.add("hid
 
 function syncBadge(){const on=navigator.onLine;const b=$("syncBadge");
   b.textContent=on?"online · sincroniza":"offline · salvo aqui";b.className="sync "+(on?"on":"off");}
-window.addEventListener("online",()=>{syncBadge();flushQueue();pullFornecedores();});
+window.addEventListener("online",()=>{syncBadge();flushQueue();flushComplementos();pullFornecedores();});
 window.addEventListener("offline",syncBadge);
 
 /* =========================== lista de fornecedores =========================== */
@@ -420,15 +424,19 @@ function renderList(){
     const done=blocosDoneForn(s)+(s.itens||[]).filter(i=>itemDone(i)).length;
     let pill='<span class="pill">a visitar</span>';
     if(s.status==="validado")pill='<span class="pill done">validado</span>';
+    else if(s.status==="complemento")pill='<span class="pill go">complemento solicitado</span>';
     else if(s.status==="recebido")pill='<span class="pill recv">relatório recebido</span>';
     else if(done>0)pill='<span class="pill go">em validação</span>';
     const c=document.createElement("div");c.className="card supcard"+(novo?" novo":"");
-    const valBtn=(s.status==="recebido"&&!isAgente())?'<button class="valbtn" data-val>✓ validar</button>':"";
+    const valBtn=((s.status==="recebido"||s.status==="complemento")&&!isAgente())?'<button class="valbtn" data-val>✓ validar</button>':"";
     c.innerHTML=`<div class="pin">🏭</div><div class="ci"><b>${esc(s.nome)}</b><span>${esc(s.cidade||"—")} · ${(s.itens||[]).length} produto(s)</span></div>${novo?'<span class="badge-novo">novo</span>':''}${pill}${valBtn}`;
     const vb=c.querySelector("[data-val]");if(vb)vb.addEventListener("click",ev=>{ev.stopPropagation();markValidado(s);});
     c.onclick=()=>{
-      if(s.status==="recebido"||s.status==="validado"){
-        if(isAgente()){alert("Relatório finalizado.");return;}
+      if(s.status==="recebido"||s.status==="validado"||s.status==="complemento"){
+        if(isAgente()){
+          if(s.status==="validado"){alert("Relatório validado pela Selecta.");return;}
+          abrirComplemento(s);return;
+        }
         verDossie(s);return;
       }
       openSup(s.id);
@@ -615,13 +623,15 @@ function renderItens(){
     const wrap=document.createElement("div");wrap.className="card";
     wrap.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
       <b>${esc(it.rotulo)}${it.is_alvo?' <span class="badge">alvo</span>':''}</b>
-      <button class="backbtn" data-open>${itemDone(it)?'continuar':'validar'}</button></div>
+      <div style="display:flex;gap:6px;flex:0 0 auto">${it.is_alvo?'':'<button class="delitem" data-del title="remover produto">✕</button>'}<button class="backbtn" data-open>${itemDone(it)?'continuar':'validar'}</button></div></div>
       <div style="font-size:12px;color:var(--muted);margin-top:3px">${c?c.spec:''}${c&&c.flag?' · '+c.flag:''}</div>
       <div data-slots style="margin-top:8px"></div>`;
     const slotsBox=wrap.querySelector("[data-slots]");
     const open=()=>{wrap.classList.toggle("opened");slotsBox.innerHTML="";
       if(wrap.classList.contains("opened"))buildItemSlots(slotsBox,it,c);};
     wrap.querySelector("[data-open]").onclick=open;
+    const delb=wrap.querySelector("[data-del]");
+    if(delb)delb.onclick=async()=>{ if(await confirmar('Remover o produto "'+it.rotulo+'" da validação? A coleta dele será descartada.')){ current.itens.splice(i,1); await saveState(); renderItens(); refreshProg(); } };
     el.appendChild(wrap);
   });
 }
@@ -850,12 +860,12 @@ function buildData(){
   return {schema:"agch.v2",fornecedor:{nome:current.nome,cidade:current.cidade,origem:current.origem,alvo:current.alvo,
       carater:current.qual.carater||null,exporta_brasil:current.qual.exporta_brasil,homologado_brasil:current.qual.homologado},
     gerado_em:new Date().toISOString(),
-    empresa:CAMPOS_FORN.map(c=>({campo:c.k,label:c.label,tipo:c.tipo,status:current.forn[c.k]?.status||null,nota:current.forn[c.k]?.note||null,midias:(current.forn[c.k]?.media||[]).length})),
+    empresa:CAMPOS_FORN.map(c=>({campo:c.k,label:c.label,tipo:c.tipo,nota:current.forn[c.k]?.note||null,midias:(current.forn[c.k]?.media||[]).length})),
     certificacoes:CERTS.filter(cert=>current.certs&&current.certs[cert.k]&&current.certs[cert.k].tem===true).map(cert=>({cert:cert.t,itens:(current.certs[cert.k].itens||"").trim()||null,docs:(current.certs[cert.k].media||[]).length})),
     itens:(current.itens||[]).map(it=>{const c=catBy(it.tipo);return {tipo:it.tipo,rotulo:it.rotulo,alvo:it.is_alvo,
       moq:(it.moq==null?null:it.moq),tem_amostra:(it.tem_amostra==null?null:it.tem_amostra),
       ficha_tecnica:(it.blocos.ficha_tecnica?.media||[]).length,
-      slots:(c?c.slots:[]).map(sl=>({cod:sl.cod,label:sl.label,critico:sl.crit,status:it.blocos[sl.cod]?.status||null,nota:it.blocos[sl.cod]?.note||null,midias:(it.blocos[sl.cod]?.media||[]).map(m=>({tipo:m.type,valida:m.valid!==false}))}))};})};
+      slots:(c?c.slots:[]).map(sl=>({cod:sl.cod,label:sl.label,critico:sl.crit,nota:it.blocos[sl.cod]?.note||null,midias:(it.blocos[sl.cod]?.media||[]).map(m=>({tipo:m.type,valida:m.valid!==false}))}))};})};
 }
 function pendencias(){
   ensureQual(current);
@@ -896,14 +906,21 @@ function buildReport(){const d=buildData();const L=[];
 
 $("btnGravar").onclick=()=>{
   $("doss_txt").textContent=buildReport();
-  const p=pendencias();const a=$("doss_alert");
-  a.innerHTML=p.length?`<div class="alertbox">Pendências antes de enviar:<br>• ${p.join("<br>• ")}</div>`:"";
+  const p=pendencias();const a=$("doss_alert");const conf=$("doss_conf");
+  if(p.length){
+    a.innerHTML=`<div class="alertbox">Complete antes de enviar:<br>• ${p.join("<br>• ")}<br><br>Pode fechar e voltar depois — o rascunho fica guardado no aparelho.</div>`;
+    conf.disabled=true;conf.style.opacity=".45";conf.textContent="Complete para enviar";
+  }else{
+    a.innerHTML='<div class="hint" style="text-align:left">Relatório completo. Ao enviar, ele é finalizado e você não poderá mais editá-lo (depois só dá para anexar arquivo pendente).</div>';
+    conf.disabled=false;conf.style.opacity="1";conf.textContent="Confirmar e enviar";
+  }
   $("mDoss").classList.add("show");
 };
 $("doss_close").onclick=()=>$("mDoss").classList.remove("show");
 $("doss_exp").onclick=()=>{const blob=new Blob([JSON.stringify(buildData(),null,2)],{type:"application/json"});
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`dossie-${current.nome.replace(/\W+/g,"_")}.json`;a.click();};
 $("doss_conf").onclick=async()=>{
+  if(pendencias().length){alert("Ainda há pendências. Complete o relatório antes de enviar.");return;}
   current.status="em_validacao";current.pendingSync=true;await saveState();
   $("mDoss").classList.remove("show");
   if(navigator.onLine){await flushQueue();}else{alert("Salvo. Vai subir sozinho quando você pegar internet.");}
@@ -982,6 +999,71 @@ async function markValidado(s){
   if(sid&&navigator.onLine){try{await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,{method:"PATCH",headers:authH(),body:JSON.stringify({status:"validado"})});}catch(e){console.warn("validado adiado",e);}}
 }
 
+// ---------- COMPLEMENTO (lado Bruno): arquivo solto, FORA do relatório enviado ----------
+function abrirComplemento(s){
+  const ov=document.createElement("div");ov.className="modelov";
+  const aviso=s.status==="complemento"?'<div class="alertbox">⚠ A Selecta solicitou um complemento neste relatório.</div>':'';
+  const jaenv=(s.complementos&&s.complementos.length)?`<div class="hint" style="text-align:left">Você já enviou ${s.complementos.length} arquivo(s) pendente(s) deste fornecedor.</div>`:'';
+  ov.innerHTML=`<div class="modelobox"><div class="modeloh">Anexar arquivo pendente — ${esc(s.nome)}</div>
+    ${aviso}
+    <div class="hint" style="text-align:left;margin-bottom:10px">O relatório enviado não é editável. Aqui você anexa um arquivo solto (documento correto ou complementar) — ele vai separado, para a Selecta analisar.</div>
+    ${jaenv}
+    <div data-cap></div>
+    <input type="text" data-leg placeholder="Legenda (ex.: certificado correto do teclado)" style="margin:10px 0">
+    <div style="display:flex;gap:10px;margin-top:8px">
+      <button class="gen" data-send>Enviar arquivo pendente</button>
+      <button class="btn sec" data-x>Fechar</button>
+    </div></div>`;
+  const capSt={media:[]};
+  ov.querySelector("[data-cap]").appendChild(captureUI(capSt,"Arquivo pendente",false,true));
+  ov.querySelector("[data-x]").onclick=()=>ov.remove();
+  ov.onclick=e=>{if(e.target===ov)ov.remove();};
+  ov.querySelector("[data-send]").onclick=async()=>{
+    if(!capSt.media.length){alert("Anexe um arquivo primeiro.");return;}
+    const leg=ov.querySelector("[data-leg]").value.trim();
+    s.complementos=s.complementos||[];
+    s.complementos.push({legenda:leg,media:capSt.media,enviado_em:new Date().toISOString(),pendingSync:true});
+    if(s.status==="complemento")s.status="recebido";   // responde à solicitação
+    await saveState();ov.remove();
+    if(navigator.onLine){await flushComplementos();alert("Arquivo pendente enviado à Selecta.");}
+    else alert("Salvo. Sobe sozinho quando houver internet.");
+    renderList();
+  };
+  document.body.appendChild(ov);
+}
+// envia complementos pendentes: nova visita "complemento" + bloco "anexo_pendente" + mídia (agente é INSERT-only)
+async function flushComplementos(){
+  if(!token&&state.session)token=state.session.token;
+  if(!token||!navigator.onLine)return;
+  const H=authHmin();
+  for(const s of Object.values(state.suppliers)){
+    if(!s.complementos||!s.complementos.length)continue;
+    const sid=s.serverId;if(!sid)continue;
+    for(const comp of s.complementos){
+      if(!comp.pendingSync)continue;
+      try{
+        const visitaId=uuid();
+        await fetch(`${SUPA_URL}/rest/v1/agch_visita`,{method:"POST",headers:H,
+          body:JSON.stringify({id:visitaId,fornecedor_id:sid,agente:state.session.email,status:"complemento",recebido_em:new Date().toISOString()})});
+        const blocoId=uuid();
+        await fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta`,{method:"POST",headers:H,
+          body:JSON.stringify({id:blocoId,visita_id:visitaId,nivel:"complemento",bloco_codigo:"anexo_pendente",nota:comp.legenda||null})});
+        await uploadMedias(comp.media,blocoId,visitaId,H,"anexo_pendente");
+        // se a Selecta havia pedido complemento, devolve o status para recebido
+        await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,{method:"PATCH",headers:H,body:JSON.stringify({status:"recebido"})});
+        comp.pendingSync=false;await saveState();
+      }catch(e){console.warn("complemento adiado",e);}
+    }
+  }
+}
+// Selecta solicita complemento ao Bruno (sinaliza na base dele via status)
+async function markComplemento(s){
+  if(!await confirmar("Solicitar um complemento ao Bruno? O relatório será sinalizado na base dele."))return false;
+  s.status="complemento";await saveState();renderList();
+  if(s.serverId&&navigator.onLine){try{await fetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${s.serverId}`,{method:"PATCH",headers:authH(),body:JSON.stringify({status:"complemento"})});}catch(e){console.warn("solicitar complemento adiado",e);}}
+  return true;
+}
+
 // ---------- VISUALIZADOR DE DOSSIÊ (lado Selecta) ----------
 function labelBlocoEmpresa(cod){if(cod&&cod.indexOf("cert_")===0){const c=certBy(cod.slice(5));return c?("Certificação "+c.t):cod;}const c=campoBy(cod);if(c)return c.label;if(cod==="ficha_tecnica")return "Ficha técnica";return cod;}
 function labelSlot(tipoItem,slotCod){if(slotCod==="ficha_tecnica")return "Ficha técnica";const c=catBy(tipoItem);const sl=c&&c.slots.find(x=>x.cod===slotCod);return sl?sl.label:slotCod;}
@@ -995,25 +1077,30 @@ function blocoDossHtml(label,b,mds,signed){
 }
 async function verDossie(s){
   const ov=document.createElement("div");ov.className="modelov";
-  ov.innerHTML=`<div class="dossbox"><div class="dossh"><b>${esc(s.nome)}</b><span class="dossclose" data-x>✕</span></div><div class="dosswho">Cadastrado por: <b>${esc(nomeOrigem(s.origem))}</b></div><div class="dossbody" data-body><p class="hint">Carregando dossiê do servidor…</p></div></div>`;
+  ov.innerHTML=`<div class="dossbox"><div class="dossh"><b>${esc(s.nome)}</b><span class="dossclose" data-x>✕</span></div><div class="dosswho">Cadastrado por: <b>${esc(nomeOrigem(s.origem))}</b></div><div class="dossbody" data-body><p class="hint">Carregando dossiê do servidor…</p></div><div class="dossfoot" data-foot></div></div>`;
   ov.querySelector("[data-x]").onclick=()=>ov.remove();
   ov.onclick=e=>{if(e.target===ov)ov.remove();};
   document.body.appendChild(ov);
-  const body=ov.querySelector("[data-body]");
+  const body=ov.querySelector("[data-body]");const foot=ov.querySelector("[data-foot]");
   if(!navigator.onLine){body.innerHTML='<p class="hint">Sem internet. Conecte pra carregar o dossiê.</p>';return;}
   try{
     const H=authH();
     const sid=s.serverId||await pushFornecedor(s);
     if(!sid){body.innerHTML='<p class="hint">Não encontrei este fornecedor no servidor.</p>';return;}
-    const vr=await fetch(`${SUPA_URL}/rest/v1/agch_visita?fornecedor_id=eq.${sid}&select=id,recebido_em&order=recebido_em.desc&limit=1`,{headers:H});
+    const vr=await fetch(`${SUPA_URL}/rest/v1/agch_visita?fornecedor_id=eq.${sid}&select=id,recebido_em,status&order=recebido_em.asc`,{headers:H});
     const vs=await vr.json();
     if(!vs.length){body.innerHTML='<p class="hint">Ainda não há relatório enviado para este fornecedor.</p>';return;}
-    const visitaId=vs[0].id;
-    const [brr,irr]=await Promise.all([
-      fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta?visita_id=eq.${visitaId}&select=id,nivel,bloco_codigo,status,nota,validacao_item_id`,{headers:H}),
-      fetch(`${SUPA_URL}/rest/v1/agch_validacao_item?visita_id=eq.${visitaId}&select=id,tipo_item,rotulo_item,is_alvo,moq,tem_amostra`,{headers:H})
+    const relatorios=vs.filter(v=>v.status!=="complemento");
+    const relVisita=relatorios.length?relatorios[relatorios.length-1]:vs[0];  // relatório mais recente
+    const comps=vs.filter(v=>v.status==="complemento");
+    const allVis=[relVisita.id,...comps.map(c=>c.id)];
+    const [frr,brr,irr]=await Promise.all([
+      fetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}&select=carater,exporta_brasil,homologado_brasil`,{headers:H}),
+      fetch(`${SUPA_URL}/rest/v1/agch_bloco_resposta?visita_id=in.(${allVis.join(",")})&select=id,nivel,bloco_codigo,status,nota,validacao_item_id,visita_id`,{headers:H}),
+      fetch(`${SUPA_URL}/rest/v1/agch_validacao_item?visita_id=eq.${relVisita.id}&select=id,tipo_item,rotulo_item,is_alvo,moq,tem_amostra`,{headers:H})
     ]);
-    const blocos=await brr.json(); const itens=await irr.json();
+    const fdata=(await frr.json())[0]||{};
+    const blocos=await brr.json();const itens=await irr.json();
     let midias=[];
     if(blocos.length){
       const ids=blocos.map(b=>b.id).join(",");
@@ -1027,18 +1114,56 @@ async function verDossie(s){
       if(sr.ok){const arr=await sr.json();arr.forEach(o=>{if(o.signedURL)signed[o.path]=SUPA_URL+o.signedURL;});}
     }
     const mById={};midias.forEach(m=>{(mById[m.bloco_resposta_id]=mById[m.bloco_resposta_id]||[]).push(m);});
+    const relBlocos=blocos.filter(b=>b.visita_id===relVisita.id);
+    const compBlocos=blocos.filter(b=>b.visita_id!==relVisita.id);
     const html=[];
+    html.push(`<div class="dossmeta">Caráter: ${esc(fdata.carater||"—")} · Exporta p/ Brasil: ${sinao(fdata.exporta_brasil)} · Homologado: ${sinao(fdata.homologado_brasil)}</div>`);
     html.push('<div class="dosssec">EMPRESA</div>');
-    blocos.filter(b=>b.nivel==="fornecedor").forEach(b=>html.push(blocoDossHtml(labelBlocoEmpresa(b.bloco_codigo),b,mById[b.id],signed)));
+    relBlocos.filter(b=>b.nivel==="fornecedor").forEach(b=>html.push(blocoDossHtml(labelBlocoEmpresa(b.bloco_codigo),b,mById[b.id],signed)));
     itens.forEach(it=>{
       const sn=it.tem_amostra===true?"Sim":it.tem_amostra===false?"Não":"—";
       html.push(`<div class="dosssec">${esc(it.rotulo_item||it.tipo_item)}${it.is_alvo?' · ALVO':''}</div>`);
       html.push(`<div class="dossmeta">MOQ: ${it.moq!=null?it.moq+" un":"—"} · Amostra: ${sn}</div>`);
-      blocos.filter(b=>b.nivel==="item"&&b.validacao_item_id===it.id).forEach(b=>html.push(blocoDossHtml(labelSlot(it.tipo_item,b.bloco_codigo),b,mById[b.id],signed)));
+      relBlocos.filter(b=>b.nivel==="item"&&b.validacao_item_id===it.id).forEach(b=>html.push(blocoDossHtml(labelSlot(it.tipo_item,b.bloco_codigo),b,mById[b.id],signed)));
     });
-    body.innerHTML=html.join("")||'<p class="hint">Dossiê vazio.</p>';
+    if(compBlocos.length){
+      html.push('<div class="dosssec">COMPLEMENTOS ENVIADOS</div>');
+      compBlocos.forEach(b=>html.push(blocoDossHtml("Arquivo pendente",b,mById[b.id],signed)));
+    }
+    const conteudo=html.join("")||'<p class="hint">Dossiê vazio.</p>';
+    body.innerHTML=conteudo;
     body.querySelectorAll("[data-full]").forEach(img=>img.onclick=()=>showModelo(img.dataset.full,""));
+    foot.innerHTML=`<button class="btn sec" data-pdf>🖨 Baixar PDF</button><button class="btn sec" data-comp>Solicitar complemento</button><button class="gen" data-val>✓ Validar</button>`;
+    foot.querySelector("[data-pdf]").onclick=()=>imprimirDossie(s.nome,conteudo);
+    foot.querySelector("[data-comp]").onclick=async()=>{if(await markComplemento(s))ov.remove();};
+    foot.querySelector("[data-val]").onclick=async()=>{await markValidado(s);ov.remove();};
   }catch(e){console.warn("dossiê erro",e);body.innerHTML='<p class="hint">Erro ao carregar. Tente novamente.</p>';}
+}
+function sinao(v){return v===true?"Sim":v===false?"Não":"—";}
+// PDF: abre janela de impressão (salvar como PDF) — sem CDN
+function imprimirDossie(nome,conteudoHtml){
+  const w=window.open("","_blank");
+  if(!w){alert("Permita pop-ups para gerar o PDF.");return;}
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Dossie - ${esc(nome)}</title><style>
+    body{font-family:Arial,Helvetica,sans-serif;color:#111;padding:22px;max-width:760px;margin:0 auto}
+    h1{font-size:20px;margin:0 0 12px}
+    .dosssec{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#444;border-top:2px solid #222;padding-top:8px;margin:16px 0 6px}
+    .dossmeta{font-size:13px;color:#333;margin:4px 0}
+    .dossblk{margin:8px 0;padding:8px 0;border-bottom:1px solid #eee}
+    .dossblkh{font-weight:700;font-size:13px;margin-bottom:4px}
+    .dossnota{font-size:13px;color:#333;margin:2px 0 6px;white-space:pre-wrap}
+    .dossthumbs{display:flex;flex-wrap:wrap;gap:6px}
+    .dossthumb{width:150px;height:150px;object-fit:cover;border:1px solid #ccc;border-radius:6px}
+    .dossdoc{display:inline-block;padding:6px 10px;border:1px solid #888;border-radius:6px;font-size:12px;color:#111;text-decoration:none;margin:2px}
+    .hint{color:#888;font-size:12px}
+    @page{margin:14mm}
+  </style></head><body><h1>Dossie - ${esc(nome)}</h1>${conteudoHtml}<p class="hint">Gerado ${new Date().toLocaleString("pt-BR")}</p></body></html>`);
+  w.document.close();
+  const go=()=>{try{w.focus();w.print();}catch(e){}};
+  const imgs=w.document.images;let pend=imgs.length;
+  if(!pend){setTimeout(go,300);return;}
+  [...imgs].forEach(im=>{if(im.complete){if(--pend<=0)setTimeout(go,300);}else{im.onload=im.onerror=()=>{if(--pend<=0)setTimeout(go,300);};}});
+  setTimeout(go,4000); // rede de segurança caso alguma imagem trave
 }
 
 // atualização automática enquanto o app está aberto e visível
@@ -1046,7 +1171,7 @@ let pollTimer=null;
 function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
 function startPolling(){
   if(pollTimer)clearInterval(pollTimer);
-  pollTimer=setInterval(()=>{if(!document.hidden&&navigator.onLine){pullFornecedores();flushQueue();}},20000);
+  pollTimer=setInterval(()=>{if(!document.hidden&&navigator.onLine){pullFornecedores();flushQueue();flushComplementos();}},20000);
 }
 document.addEventListener("visibilitychange",()=>{if(!document.hidden&&navigator.onLine)pullFornecedores();});
 
@@ -1121,13 +1246,13 @@ function esc(s){return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":
 /* =========================== boot =========================== */
 $("li_btn").onclick=async()=>{
   $("li_err").textContent="";
-  try{await doLogin($("li_email").value.trim(),$("li_pass").value);aplicarUsuario();renderList();show("vList");flushQueue();pullFornecedores();startPolling();}
+  try{await doLogin($("li_email").value.trim(),$("li_pass").value);aplicarUsuario();renderList();show("vList");flushQueue();flushComplementos();pullFornecedores();startPolling();}
   catch(e){$("li_err").textContent=e.message;}
 };
 (async function(){
   await openDB();await loadState();syncBadge();
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
-  if(state.session&&state.session.token){token=state.session.token;aplicarUsuario();renderList();show("vList");if(navigator.onLine){flushQueue();pullFornecedores();}startPolling();}
+  if(state.session&&state.session.token){token=state.session.token;aplicarUsuario();renderList();show("vList");if(navigator.onLine){flushQueue();flushComplementos();pullFornecedores();}startPolling();}
   else show("vLogin");
 })();
 </script>

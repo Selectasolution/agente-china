@@ -262,7 +262,7 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.16
+   AGENTE CHINA — App de campo · Selecta Solution · v2.17
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
@@ -276,6 +276,7 @@
    v2.14: quadro de certificações da fábrica (ANATEL, INMETRO, FCC, CE, RoHS, ISO 9001, CCC, UL) no bloco de documentação. Bruno constata in loco o que existe → "Tem" abre campo "quais itens" + anexo do documento. Captura/confirmação de fato; análise é interna.
    v2.15: excluir produto da lista de validação (botão ✕ por item, exceto o alvo) com confirmação Sim/Não — corrige equívoco de item adicionado errado.
    v2.16: instrução de complemento — ao solicitar complemento, a Selecta escreve "complemento de quê?" e o texto aparece para o Bruno (coluna agch_fornecedor.instrucao_complemento). No banco: hardening RLS v0.8 (storage agente INSERT-only; update do agente travado à captura; agente não emite juízo; grants do anon revogados).
+   v2.17: CORREÇÃO do ciclo de complemento. (1) Removido o botão "Reenviar relatório" do modal de complemento (confunde — se há complemento, o relatório já chegou). (2) Aviso de "arquivo pendente enviado" agora CONFIRMA de verdade no servidor (antes mentia: o envio batia na CHECK constraint e falhava em silêncio). (3) A Selecta passa a reconhecer a resposta do complemento pela visita 'complemento' e reabre o fornecedor como 'recebido'. Requer no banco: agch_visita.status e agch_bloco_resposta.nivel aceitarem 'complemento'.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -1088,6 +1089,15 @@ async function pullFornecedores(){
             try{await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${s.serverId}`,"PATCH",{status:"recebido"});}catch(e){}
           }
         }
+        // Bruno RESPONDEU um complemento: há visita 'complemento' e o fornecedor estava aguardando ('complemento').
+        // O agente não consegue mexer no fornecedor (origem Selecta), então é a Selecta que reconhece e reabre como 'recebido'.
+        const comComplementoResp=new Set(visitas.filter(v=>v.status==="complemento").map(v=>v.fornecedor_id));
+        for(const s of Object.values(state.suppliers)){
+          if(s.serverId&&s.status==="complemento"&&comComplementoResp.has(s.serverId)){
+            s.status="recebido"; s.visto=false; changed=true;
+            try{await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${s.serverId}`,"PATCH",{status:"recebido"});}catch(e){}
+          }
+        }
       }
     }
     if(changed){await saveState();renderList();}
@@ -1166,8 +1176,6 @@ function abrirComplemento(s){
   const jaenv=(s.complementos&&s.complementos.length)?`<div class="hint" style="text-align:left">Você já enviou ${s.complementos.length} arquivo(s) pendente(s) deste fornecedor.</div>`:'';
   ov.innerHTML=`<div class="modelobox"><div class="modeloh">Anexar arquivo pendente — ${esc(s.nome)}</div>
     ${aviso}
-    <div class="reenviobox"><div class="hint" style="text-align:left;margin-bottom:8px">Em dúvida se o relatório chegou? Reenvie ao servidor (não duplica o seu trabalho — só reenvia).</div>
-      <button class="btn sec" data-reenv>Reenviar relatório ao servidor</button></div>
     <div class="hint" style="text-align:left;margin:14px 0 10px">O relatório enviado não é editável. Aqui você anexa um arquivo solto (documento correto ou complementar) — ele vai separado, para a Selecta analisar.</div>
     ${jaenv}
     <div data-cap></div>
@@ -1176,14 +1184,6 @@ function abrirComplemento(s){
       <button class="gen" data-send>Enviar arquivo pendente</button>
       <button class="btn sec" data-x>Fechar</button>
     </div></div>`;
-  ov.querySelector("[data-reenv]").onclick=async()=>{
-    if(!navigator.onLine){alert("Sem internet. Conecte para reenviar.");return;}
-    if(!await confirmar("Reenviar este relatório ao servidor agora?"))return;
-    s.pendingSync=true;await saveState();
-    lastSyncError=null;await flushQueue();
-    if(s.pendingSync)alert("⚠ Ainda não confirmou.\n\nMotivo: "+(lastSyncError||"sem detalhe")+"\n\nVai tentar de novo sozinho. Se persistir, me avise.");
-    else{alert("✓ Relatório confirmado no servidor.");ov.remove();}
-  };
   const capSt={media:[]};
   ov.querySelector("[data-cap]").appendChild(captureUI(capSt,"Arquivo pendente",false,true));
   ov.querySelector("[data-x]").onclick=()=>ov.remove();
@@ -1192,10 +1192,20 @@ function abrirComplemento(s){
     if(!capSt.media.length){alert("Anexe um arquivo primeiro.");return;}
     const leg=ov.querySelector("[data-leg]").value.trim();
     s.complementos=s.complementos||[];
-    s.complementos.push({legenda:leg,media:capSt.media,enviado_em:new Date().toISOString(),pendingSync:true});
-    if(s.status==="complemento")s.status="recebido";   // responde à solicitação
+    const comp={legenda:leg,media:capSt.media,enviado_em:new Date().toISOString(),pendingSync:true};
+    s.complementos.push(comp);
     await saveState();ov.remove();
-    if(navigator.onLine){await flushComplementos();alert("Arquivo pendente enviado à Selecta.");}
+    if(navigator.onLine){
+      lastSyncError=null;
+      await flushComplementos();
+      if(comp.pendingSync){
+        alert("⚠ NÃO consegui confirmar o envio do arquivo pendente.\n\nMotivo: "+(lastSyncError||"sem detalhe")+"\n\nFica salvo no aparelho e sobe sozinho quando houver internet.");
+      }else{
+        if(s.status==="complemento")s.status="recebido";  // só marca respondido DEPOIS de confirmar no servidor
+        await saveState();
+        alert("✓ Arquivo pendente enviado e confirmado.");
+      }
+    }
     else alert("Salvo. Sobe sozinho quando houver internet.");
     renderList();
   };

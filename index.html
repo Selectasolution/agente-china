@@ -262,7 +262,7 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.11
+   AGENTE CHINA — App de campo · Selecta Solution · v2.16
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
@@ -275,6 +275,7 @@
    v2.13: inteligência silenciosa — removido o veredito (OK/Atenção/Reprova) do app do agente. Bruno só CAPTURA (foto/anexo) + observação livre ("achado importante"). Avaliação de valor é 100% da Selecta, por fora. Bloco conta como coletado por foto OU observação.
    v2.14: quadro de certificações da fábrica (ANATEL, INMETRO, FCC, CE, RoHS, ISO 9001, CCC, UL) no bloco de documentação. Bruno constata in loco o que existe → "Tem" abre campo "quais itens" + anexo do documento. Captura/confirmação de fato; análise é interna.
    v2.15: excluir produto da lista de validação (botão ✕ por item, exceto o alvo) com confirmação Sim/Não — corrige equívoco de item adicionado errado.
+   v2.16: instrução de complemento — ao solicitar complemento, a Selecta escreve "complemento de quê?" e o texto aparece para o Bruno (coluna agch_fornecedor.instrucao_complemento). No banco: hardening RLS v0.8 (storage agente INSERT-only; update do agente travado à captura; agente não emite juízo; grants do anon revogados).
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -1052,7 +1053,7 @@ async function pullFornecedores(){
   if(!token&&state.session)token=state.session.token; if(!token)return;
   await ensureFreshToken();
   try{
-    const url=`${SUPA_URL}/rest/v1/agch_fornecedor?select=id,nome,cidade,origem,status,observacao_alvo&order=criado_em.desc`;
+    const url=`${SUPA_URL}/rest/v1/agch_fornecedor?select=id,nome,cidade,origem,status,observacao_alvo,instrucao_complemento&order=criado_em.desc`;
     let r=await fetch(url,{headers:authH()});
     if(r.status===401&&await refreshToken())r=await fetch(url,{headers:authH()});
     if(!r.ok)return;
@@ -1061,10 +1062,11 @@ async function pullFornecedores(){
       let s=Object.values(state.suppliers).find(x=>x.serverId===f.id);
       if(s){
         if(s.status!==f.status){ if(f.status==="recebido"&&s.status!=="recebido")s.visto=false; s.status=f.status; changed=true; }
+        if(s.instrucaoComplemento!==(f.instrucao_complemento||null)){ s.instrucaoComplemento=f.instrucao_complemento||null; changed=true; }
       }else{
         const lid="srv_"+f.id;
         state.suppliers[lid]={id:lid,serverId:f.id,remote:true,nome:f.nome,cidade:f.cidade||"",origem:f.origem||"selecta",
-          alvo:f.observacao_alvo||null,status:f.status||"nao_iniciado",visto:(f.status!=="recebido"),
+          alvo:f.observacao_alvo||null,instrucaoComplemento:f.instrucao_complemento||null,status:f.status||"nao_iniciado",visto:(f.status!=="recebido"),
           qual:{carater:"",exporta_brasil:null,homologado:null},forn:{},itens:[]};
         if(state.suppliers[lid].alvo)ensureAlvoItem(state.suppliers[lid]);
         changed=true;
@@ -1160,7 +1162,7 @@ function resumoLocalView(s){
 // ---------- COMPLEMENTO (lado Bruno): arquivo solto, FORA do relatório enviado ----------
 function abrirComplemento(s){
   const ov=document.createElement("div");ov.className="modelov";
-  const aviso=s.status==="complemento"?'<div class="alertbox">⚠ A Selecta solicitou um complemento neste relatório.</div>':'';
+  const aviso=s.status==="complemento"?`<div class="alertbox">⚠ A Selecta solicitou um complemento neste relatório.${s.instrucaoComplemento?'<br><br><b>O que falta:</b> '+esc(s.instrucaoComplemento):''}</div>`:'';
   const jaenv=(s.complementos&&s.complementos.length)?`<div class="hint" style="text-align:left">Você já enviou ${s.complementos.length} arquivo(s) pendente(s) deste fornecedor.</div>`:'';
   ov.innerHTML=`<div class="modelobox"><div class="modeloh">Anexar arquivo pendente — ${esc(s.nome)}</div>
     ${aviso}
@@ -1223,10 +1225,26 @@ async function flushComplementos(){
 }
 // Selecta solicita complemento ao Bruno (sinaliza na base dele via status)
 async function markComplemento(s){
-  if(!await confirmar("Solicitar um complemento ao Bruno? O relatório será sinalizado na base dele."))return false;
-  s.status="complemento";await saveState();renderList();
-  if(s.serverId&&navigator.onLine){await ensureFreshToken();try{await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${s.serverId}`,"PATCH",{status:"complemento"});}catch(e){console.warn("solicitar complemento adiado",e);}}
+  const instrucao=await pedirInstrucaoComplemento();
+  if(instrucao===null)return false; // cancelou
+  s.status="complemento";s.instrucaoComplemento=instrucao||"";await saveState();renderList();
+  if(s.serverId&&navigator.onLine){await ensureFreshToken();try{await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${s.serverId}`,"PATCH",{status:"complemento",instrucao_complemento:instrucao||null});}catch(e){console.warn("solicitar complemento adiado",e);}}
   return true;
+}
+// modal: a Selecta escreve "complemento de quê?" — o texto vai para o Bruno (coluna instrucao_complemento)
+function pedirInstrucaoComplemento(){
+  return new Promise(res=>{
+    const ov=document.createElement("div");ov.className="modelov";
+    ov.innerHTML=`<div class="modelobox"><div class="modeloh">Complemento de quê? <span class="hint">(o Bruno vai ler isto)</span></div>
+      <textarea data-m rows="3" placeholder="Ex.: faltou a foto da etiqueta do SSD · reenviar a tabela de preço legível · documento da empresa ilegível" style="margin:6px 0"></textarea>
+      <div style="display:flex;gap:10px;margin-top:8px">
+        <button class="gen" data-ok>Solicitar complemento</button>
+        <button class="btn sec" data-c>Cancelar</button></div></div>`;
+    ov.querySelector("[data-ok]").onclick=()=>{const v=ov.querySelector("[data-m]").value.trim();ov.remove();res(v);};
+    ov.querySelector("[data-c]").onclick=()=>{ov.remove();res(null);};
+    ov.onclick=e=>{if(e.target===ov){ov.remove();res(null);}};
+    document.body.appendChild(ov);
+  });
 }
 
 // ---------- VISUALIZADOR DE DOSSIÊ (lado Selecta) ----------

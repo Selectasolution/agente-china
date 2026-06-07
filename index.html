@@ -144,6 +144,7 @@
   .thumbs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 4px}
   .th{position:relative}.th img{width:56px;height:56px;object-fit:cover;border-radius:7px;border:2px solid var(--ok)}
   .th.ruim img{border-color:var(--bad)} .th .flag{position:absolute;left:0;right:0;bottom:0;font-size:8px;font-weight:800;text-align:center;color:#fff;background:var(--bad);border-radius:0 0 5px 5px}
+  .th .thx{position:absolute;top:-7px;right:-7px;width:19px;height:19px;border-radius:50%;background:var(--bad);color:#fff;font-size:14px;font-weight:800;line-height:17px;text-align:center;cursor:pointer;border:1.5px solid var(--bg);z-index:2}
   .statusrow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:10px 0 8px}
   .sbtn{padding:10px 4px;border:1.5px solid var(--line);border-radius:8px;background:#0a130e;font-size:12px;font-weight:800;cursor:pointer;color:var(--muted);text-transform:uppercase}
   .sbtn[data-s="ok"].on{background:var(--ok);color:#fff;border-color:var(--ok)}
@@ -263,7 +264,7 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.18
+   AGENTE CHINA — App de campo · Selecta Solution · v2.19
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
@@ -279,6 +280,7 @@
    v2.16: instrução de complemento — ao solicitar complemento, a Selecta escreve "complemento de quê?" e o texto aparece para o Bruno (coluna agch_fornecedor.instrucao_complemento). No banco: hardening RLS v0.8 (storage agente INSERT-only; update do agente travado à captura; agente não emite juízo; grants do anon revogados).
    v2.17: CORREÇÃO do ciclo de complemento. (1) Removido o botão "Reenviar relatório" do modal de complemento (confunde — se há complemento, o relatório já chegou). (2) Aviso de "arquivo pendente enviado" agora CONFIRMA de verdade no servidor (antes mentia: o envio batia na CHECK constraint e falhava em silêncio). (3) A Selecta passa a reconhecer a resposta do complemento pela visita 'complemento' e reabre o fornecedor como 'recebido'. Requer no banco: agch_visita.status e agch_bloco_resposta.nivel aceitarem 'complemento'.
    v2.18: (1) Nova aba "Análise" — o relatório enviado (status 'recebido') sai de "A validar" e fica em "Análise" aguardando o veredicto; ao aprovar/reprovar, vai para a aba final. (2) Envio honesto de anexo: se o arquivo não estiver NESTE aparelho na hora do envio (capturado em outro navegador/dispositivo), o app NÃO diz "confirmado" — ele para, mantém pendente e avisa, e não cria visita/bloco órfão no servidor. Mata o último ponto em que o envio podia dizer "ok" sem a mídia ter subido. (3) base local zerada (STATE_V=3) para início da operação real.
+   v2.19: (1) CORREÇÃO do erro 403 no upload — o upload deixou de usar 'x-upsert' (sobrescrever), que exige permissão de UPDATE que o agente, por desenho, não tem (storage do agente é INSERT-only). Como cada arquivo vai para um caminho único, gravação simples basta. O banco não mudou. (2) Botão "×" visível em cada anexo para remover/refazer (antes só dava tocando, sem dica visível no celular). (3) Removida a frase "Aceita PDF, Excel, Word, imagem…" do bloco de documentação.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -593,8 +595,7 @@ function campoFotoEl(c){
 function campoDocEl(c){
   const st=current.forn[c.k];
   const div=document.createElement("div");div.className="slot";
-  div.innerHTML=`<div class="slotlabel">📎 ${c.label}${c.obrig?' <span style="color:var(--amber)">(obrigatório)</span>':''}${c.zh?`<div class="zh">${c.zh}</div>`:''}</div>
-    <div class="hint" style="margin:2px 0 6px">Aceita PDF, Excel, Word, imagem. Pode anexar agora ou depois.</div>`;
+  div.innerHTML=`<div class="slotlabel">📎 ${c.label}${c.obrig?' <span style="color:var(--amber)">(obrigatório)</span>':''}${c.zh?`<div class="zh">${c.zh}</div>`:''}</div>`;
   div.appendChild(captureUI(st,c.label,false,true));
   return div;
 }
@@ -875,8 +876,10 @@ async function drawThumbs(box,st){
   for(let i=0;i<st.media.length;i++){const m=st.media[i];const div=document.createElement("div");div.className="th"+(m.valid===false?" ruim":"");
     if(m.type==="image"){const blob=await mediaGet(m.id);const u=blob?URL.createObjectURL(blob):"";
       div.innerHTML=`<img src="${u}">`+(m.valid===false?'<div class="flag">REFAZER</div>':'');}
-    else{const tag=m.type==="pdf"?"PDF":(m.type==="video"?"VÍDEO":"DOC");div.innerHTML=`<div class="th"><div style="width:56px;height:56px;border-radius:7px;border:2px solid var(--ok);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:var(--muted)">${tag}</div></div>`;}
-    div.title="toque para remover";div.onclick=()=>{if(confirm("Remover esta mídia?")){st.media.splice(i,1);saveState();drawThumbs(box,st);refreshProg();}};
+    else{const tag=m.type==="pdf"?"PDF":(m.type==="video"?"VÍDEO":"DOC");div.innerHTML=`<div style="width:56px;height:56px;border-radius:7px;border:2px solid var(--ok);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:var(--muted)">${tag}</div>`;}
+    const x=document.createElement("div");x.className="thx";x.textContent="×";x.title="remover";
+    x.onclick=(ev)=>{ev.stopPropagation();if(confirm("Remover este anexo?")){st.media.splice(i,1);saveState();drawThumbs(box,st);refreshProg();}};
+    div.appendChild(x);
     wrap.appendChild(div);}
   const v=st.media.filter(m=>m.valid!==false).length;cnt.textContent=st.media.length?`${v} válida(s)/${st.media.length}`:"";
 }
@@ -1435,7 +1438,7 @@ async function uploadMedias(media,blocoId,visitaId,H,slotCod){
     ext=(ext+"").replace(/[^a-z0-9]/gi,"").slice(0,8)||"bin";
     const path=`${visitaId}/${m.id}.${ext}`;
     const stUrl=`${SUPA_URL}/storage/v1/object/agch-midias/${path}`;
-    const mkUp=()=>({method:"POST",headers:{"apikey":SUPA_KEY,"Authorization":"Bearer "+token,"x-upsert":"true"},body:blob});
+    const mkUp=()=>({method:"POST",headers:{"apikey":SUPA_KEY,"Authorization":"Bearer "+token},body:blob});
     let r=await fetch(stUrl,mkUp());
     if(r.status===401&&await refreshToken())r=await fetch(stUrl,mkUp());
     await chk(r,"upload de arquivo");

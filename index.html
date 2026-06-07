@@ -63,8 +63,8 @@
   .pill.go{color:var(--amber);border-color:#3a2e0e}.pill.done{color:var(--green-bright);border-color:var(--deep)}
   .pill.recv{color:#7dd3fc;border-color:#0c4a6e;background:#08222e}
   .pill.bad{color:#fca5a5;border-color:#7f1d1d;background:#240c0c}
-  .abas{display:flex;gap:6px;margin:2px 0 12px}
-  .aba{flex:1;background:transparent;border:1px solid var(--line);color:var(--muted);padding:9px 4px;border-radius:9px;font-size:12.5px;font-weight:800;cursor:pointer}
+  .abas{display:flex;gap:4px;margin:2px 0 12px}
+  .aba{flex:1;min-width:0;background:transparent;border:1px solid var(--line);color:var(--muted);padding:8px 3px;border-radius:9px;font-size:11px;font-weight:800;cursor:pointer;line-height:1.15}
   .aba.on{background:var(--panel2);color:var(--ink);border-color:var(--accent)}
   .resultadobox{font-weight:800;padding:10px;border-radius:9px;text-align:center;margin:6px 0}
   .resultadobox.apr{background:#0c2417;color:var(--green-bright);border:1px solid var(--green-bright)}
@@ -198,6 +198,7 @@
   <h2 class="sec">Fornecedores</h2>
   <div class="abas">
     <button class="aba on" data-aba="validar">A validar</button>
+    <button class="aba" data-aba="analise">Análise</button>
     <button class="aba" data-aba="aprovados">Aprovados</button>
     <button class="aba" data-aba="reprovados">Reprovados</button>
   </div>
@@ -262,7 +263,7 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.17
+   AGENTE CHINA — App de campo · Selecta Solution · v2.18
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
@@ -277,6 +278,7 @@
    v2.15: excluir produto da lista de validação (botão ✕ por item, exceto o alvo) com confirmação Sim/Não — corrige equívoco de item adicionado errado.
    v2.16: instrução de complemento — ao solicitar complemento, a Selecta escreve "complemento de quê?" e o texto aparece para o Bruno (coluna agch_fornecedor.instrucao_complemento). No banco: hardening RLS v0.8 (storage agente INSERT-only; update do agente travado à captura; agente não emite juízo; grants do anon revogados).
    v2.17: CORREÇÃO do ciclo de complemento. (1) Removido o botão "Reenviar relatório" do modal de complemento (confunde — se há complemento, o relatório já chegou). (2) Aviso de "arquivo pendente enviado" agora CONFIRMA de verdade no servidor (antes mentia: o envio batia na CHECK constraint e falhava em silêncio). (3) A Selecta passa a reconhecer a resposta do complemento pela visita 'complemento' e reabre o fornecedor como 'recebido'. Requer no banco: agch_visita.status e agch_bloco_resposta.nivel aceitarem 'complemento'.
+   v2.18: (1) Nova aba "Análise" — o relatório enviado (status 'recebido') sai de "A validar" e fica em "Análise" aguardando o veredicto; ao aprovar/reprovar, vai para a aba final. (2) Envio honesto de anexo: se o arquivo não estiver NESTE aparelho na hora do envio (capturado em outro navegador/dispositivo), o app NÃO diz "confirmado" — ele para, mantém pendente e avisa, e não cria visita/bloco órfão no servidor. Mata o último ponto em que o envio podia dizer "ok" sem a mídia ter subido. (3) base local zerada (STATE_V=3) para início da operação real.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -396,7 +398,7 @@ function mediaSet(id,blob){return new Promise(r=>{const t=idb.transaction("media
 function mediaGet(id){return new Promise(r=>{const t=idb.transaction("media").objectStore("media").get(id);t.onsuccess=()=>r(t.result||null);t.onerror=()=>r(null);});}
 
 /* =========================== estado =========================== */
-const STATE_V=2; // bump = limpa fornecedores locais de versão antiga (a estrutura mudou)
+const STATE_V=3; // bump = limpa fornecedores locais de versão antiga (a estrutura mudou). v3: base zerada para operação real.
 let state={v:STATE_V, session:null, suppliers:{}};  // suppliers[id]={id,nome,cidade,origem,alvo,status, qual:{carater,exporta_brasil,homologado}, forn:{campoK:{status,note,media:[]}}, itens:[...]}
 let token=null, current=null;
 
@@ -433,21 +435,27 @@ let abaAtual="validar";
 function abaDe(s){
   if(s.status==="aprovado"||s.status==="validado")return "aprovados";   // "validado" legado = aprovado
   if(s.status==="reprovado")return "reprovados";
-  return "validar";  // a visitar / em coleta / recebido / complemento
+  if(s.status==="recebido")return "analise";   // enviado: aguardando o veredicto da Selecta
+  return "validar";  // a visitar / em coleta / complemento (o Bruno ainda tem ação a fazer)
 }
 function renderList(){
   const el=$("list");el.innerHTML="";
   const todos=Object.values(state.suppliers);
   // contadores nas abas
-  const cont={validar:0,aprovados:0,reprovados:0};
+  const cont={validar:0,analise:0,aprovados:0,reprovados:0};
   todos.forEach(s=>cont[abaDe(s)]++);
   document.querySelectorAll(".aba").forEach(b=>{
-    const k=b.dataset.aba;const base={validar:"A validar",aprovados:"Aprovados",reprovados:"Reprovados"}[k];
+    const k=b.dataset.aba;const base={validar:"A validar",analise:"Análise",aprovados:"Aprovados",reprovados:"Reprovados"}[k];
     b.textContent=base+(cont[k]?" ("+cont[k]+")":"");
     b.classList.toggle("on",k===abaAtual);
   });
   const arr=todos.filter(s=>abaDe(s)===abaAtual);
-  if(!arr.length){el.innerHTML='<p class="hint">'+(abaAtual==="validar"?"Nenhum fornecedor na fila. Cadastre um acima.":"Nada aqui ainda.")+'</p>';}
+  if(!arr.length){
+    let vazio="Nada aqui ainda.";
+    if(abaAtual==="validar")vazio="Nenhum fornecedor na fila. Cadastre um acima.";
+    else if(abaAtual==="analise")vazio=isAgente()?"Nada aguardando análise da Selecta.":"Nada para analisar no momento.";
+    el.innerHTML='<p class="hint">'+vazio+'</p>';
+  }
   else{
     arr.sort((a,b)=>(novoFlag(b)?1:0)-(novoFlag(a)?1:0));   // novos primeiro
     arr.forEach(s=>{
@@ -1222,6 +1230,10 @@ async function flushComplementos(){
     for(const comp of s.complementos){
       if(!comp.pendingSync)continue;
       try{
+        // 0. confere que os anexos estão NESTE aparelho ANTES de criar qualquer coisa no servidor (sem isto, sobra visita/bloco órfão sem mídia)
+        for(const m of (comp.media||[])){
+          if(!await mediaGet(m.id))throw new Error("O anexo \""+(m.name||"arquivo")+"\" não está neste aparelho/navegador (foi capturado em outro). Capture e envie pelo mesmo dispositivo.");
+        }
         const visitaId=uuid();
         await chk(await authFetch(`${SUPA_URL}/rest/v1/agch_visita`,"POST",{id:visitaId,fornecedor_id:sid,agente:state.session.email,status:"complemento",recebido_em:new Date().toISOString()}),"criar complemento");
         const blocoId=uuid();
@@ -1229,7 +1241,7 @@ async function flushComplementos(){
         await uploadMedias(comp.media,blocoId,visitaId,null,"anexo_pendente");
         try{await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${sid}`,"PATCH",{status:"recebido"});}catch(e){}
         comp.pendingSync=false;await saveState();
-      }catch(e){console.warn("complemento NÃO confirmado:",e.message||e);}
+      }catch(e){lastSyncError=e.message||(""+e);console.warn("complemento NÃO confirmado:",lastSyncError);}
     }
   }
 }
@@ -1417,7 +1429,8 @@ async function enviarRelatorio(s,sid){
 }
 async function uploadMedias(media,blocoId,visitaId,H,slotCod){
   for(const m of (media||[])){
-    const blob=await mediaGet(m.id);if(!blob)continue;
+    const blob=await mediaGet(m.id);
+    if(!blob)throw new Error("O anexo \""+(m.name||"arquivo")+"\" não está neste aparelho/navegador (foi capturado em outro). Capture e envie pelo mesmo dispositivo.");
     let ext=m.type==="image"?"jpg":(m.type==="pdf"?"pdf":(m.type==="video"?"mp4":((m.name||"").split(".").pop()||"bin")));
     ext=(ext+"").replace(/[^a-z0-9]/gi,"").slice(0,8)||"bin";
     const path=`${visitaId}/${m.id}.${ext}`;

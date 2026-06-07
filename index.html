@@ -60,6 +60,8 @@
   .supcard .ci{flex:1;min-width:0}.supcard .ci b{display:block;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .supcard .ci span{font-size:12px;color:var(--muted)}
   .pill{font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:20px;background:#0f1c15;color:var(--muted);border:1px solid var(--line)}
+  .supcard .cardel{flex:0 0 auto;background:transparent;border:none;color:var(--muted);font-size:15px;cursor:pointer;padding:4px 2px;opacity:.55;line-height:1}
+  .supcard .cardel:active{opacity:1}
   .pill.go{color:var(--amber);border-color:#3a2e0e}.pill.done{color:var(--green-bright);border-color:var(--deep)}
   .pill.recv{color:#7dd3fc;border-color:#0c4a6e;background:#08222e}
   .pill.bad{color:#fca5a5;border-color:#7f1d1d;background:#240c0c}
@@ -264,7 +266,7 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.19
+   AGENTE CHINA — App de campo · Selecta Solution · v2.20
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
@@ -281,6 +283,7 @@
    v2.17: CORREÇÃO do ciclo de complemento. (1) Removido o botão "Reenviar relatório" do modal de complemento (confunde — se há complemento, o relatório já chegou). (2) Aviso de "arquivo pendente enviado" agora CONFIRMA de verdade no servidor (antes mentia: o envio batia na CHECK constraint e falhava em silêncio). (3) A Selecta passa a reconhecer a resposta do complemento pela visita 'complemento' e reabre o fornecedor como 'recebido'. Requer no banco: agch_visita.status e agch_bloco_resposta.nivel aceitarem 'complemento'.
    v2.18: (1) Nova aba "Análise" — o relatório enviado (status 'recebido') sai de "A validar" e fica em "Análise" aguardando o veredicto; ao aprovar/reprovar, vai para a aba final. (2) Envio honesto de anexo: se o arquivo não estiver NESTE aparelho na hora do envio (capturado em outro navegador/dispositivo), o app NÃO diz "confirmado" — ele para, mantém pendente e avisa, e não cria visita/bloco órfão no servidor. Mata o último ponto em que o envio podia dizer "ok" sem a mídia ter subido. (3) base local zerada (STATE_V=3) para início da operação real.
    v2.19: (1) CORREÇÃO do erro 403 no upload — o upload deixou de usar 'x-upsert' (sobrescrever), que exige permissão de UPDATE que o agente, por desenho, não tem (storage do agente é INSERT-only). Como cada arquivo vai para um caminho único, gravação simples basta. O banco não mudou. (2) Botão "×" visível em cada anexo para remover/refazer (antes só dava tocando, sem dica visível no celular). (3) Removida a frase "Aceita PDF, Excel, Word, imagem…" do bloco de documentação.
+   v2.20: (1) EXCLUSÃO PROPAGA — a sincronização agora REMOVE da lista local o fornecedor que foi apagado no servidor (antes só adicionava/atualizava, nunca removia; por isso um excluído "continuava aparecendo"). Coleta local ainda não enviada é preservada. (2) Lixeira 🗑 direto no card de cada fornecedor (só Selecta) — exclui no servidor e localmente, em qualquer estado, sem precisar abrir nada nem rodar SQL. Excluiu na Selecta → some em todos os aparelhos na próxima sincronização.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -485,6 +488,11 @@ function renderList(){
         }
         openSup(s.id);
       };
+      if(!isAgente()){
+        const trash=document.createElement("button");trash.className="cardel";trash.textContent="🗑";trash.title="excluir fornecedor";
+        trash.onclick=(ev)=>{ev.stopPropagation();excluirFornecedor(s);};
+        c.appendChild(trash);
+      }
       el.appendChild(c);
     });
   }
@@ -1083,6 +1091,12 @@ async function pullFornecedores(){
         if(state.suppliers[lid].alvo)ensureAlvoItem(state.suppliers[lid]);
         changed=true;
       }
+    }
+    // EXCLUSÃO PROPAGA: tira da lista local quem foi apagado no servidor (preserva coleta local ainda não enviada)
+    const idsServidor=new Set(rows.map(f=>f.id));
+    for(const k of Object.keys(state.suppliers)){
+      const sx=state.suppliers[k];
+      if(sx.serverId && !idsServidor.has(sx.serverId) && !sx.pendingSync){ delete state.suppliers[k]; changed=true; }
     }
     // CORREÇÃO: a Selecta enxerga "relatório recebido" pela EXISTÊNCIA da visita,
     // mesmo que o status do fornecedor não tenha mudado (o agente é barrado de alterar fornecedor origem 'selecta').

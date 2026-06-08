@@ -266,7 +266,7 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.20
+   AGENTE CHINA — App de campo · Selecta Solution · v2.21
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
@@ -284,6 +284,7 @@
    v2.18: (1) Nova aba "Análise" — o relatório enviado (status 'recebido') sai de "A validar" e fica em "Análise" aguardando o veredicto; ao aprovar/reprovar, vai para a aba final. (2) Envio honesto de anexo: se o arquivo não estiver NESTE aparelho na hora do envio (capturado em outro navegador/dispositivo), o app NÃO diz "confirmado" — ele para, mantém pendente e avisa, e não cria visita/bloco órfão no servidor. Mata o último ponto em que o envio podia dizer "ok" sem a mídia ter subido. (3) base local zerada (STATE_V=3) para início da operação real.
    v2.19: (1) CORREÇÃO do erro 403 no upload — o upload deixou de usar 'x-upsert' (sobrescrever), que exige permissão de UPDATE que o agente, por desenho, não tem (storage do agente é INSERT-only). Como cada arquivo vai para um caminho único, gravação simples basta. O banco não mudou. (2) Botão "×" visível em cada anexo para remover/refazer (antes só dava tocando, sem dica visível no celular). (3) Removida a frase "Aceita PDF, Excel, Word, imagem…" do bloco de documentação.
    v2.20: (1) EXCLUSÃO PROPAGA — a sincronização agora REMOVE da lista local o fornecedor que foi apagado no servidor (antes só adicionava/atualizava, nunca removia; por isso um excluído "continuava aparecendo"). Coleta local ainda não enviada é preservada. (2) Lixeira 🗑 direto no card de cada fornecedor (só Selecta) — exclui no servidor e localmente, em qualquer estado, sem precisar abrir nada nem rodar SQL. Excluiu na Selecta → some em todos os aparelhos na próxima sincronização.
+   v2.21: (1) Dois relatórios no dossiê (só Selecta — o Bruno nunca vê): "📄 Ver relatório" (PDF de apresentação, uso da Selecta) e "📥 Importar p/ Mesa" (PDF denso com cabeçalho de rastreio: ID de origem, datas, cadastrado por — para colar na conversa da Mesa de Análise). Ambos via Imprimir → Salvar como PDF (sem biblioteca externa, mantém o app leve). A ponte Mesa → Import OS fica para etapa futura.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -1356,8 +1357,10 @@ async function verDossie(s){
     const conteudo=html.join("")||'<p class="hint">Dossiê vazio.</p>';
     body.innerHTML=conteudo;
     body.querySelectorAll("[data-full]").forEach(img=>img.onclick=()=>showModelo(img.dataset.full,""));
-    foot.innerHTML=`<button class="btn sec" data-pdf>🖨 PDF</button><button class="btn sec" data-comp>Complemento</button><button class="btn sec" data-rep>Reprovar</button><button class="gen" data-apr>✓ Aprovar</button>`;
+    const rastreioIA=`<div class="dosssec">IDENTIFICAÇÃO / RASTREIO</div><div class="dossmeta">Fornecedor: ${esc(s.nome)}</div><div class="dossmeta">Cidade: ${esc(s.cidade||"—")}</div><div class="dossmeta">Cadastrado por: ${esc(nomeOrigem(s.origem))}</div><div class="dossmeta">ID de origem (Agente China): ${esc(sid)}</div><div class="dossmeta">Relatório de campo em: ${relVisita.recebido_em?new Date(relVisita.recebido_em).toLocaleString("pt-BR"):"—"}</div><div class="dossnota">Conteúdo abaixo: evidência de campo coletada pelo agente, sem juízo. Insumo para análise de viabilidade cruzando com pesquisa externa.</div>`;
+    foot.innerHTML=`<button class="btn sec" data-pdf>📄 Ver relatório</button><button class="btn sec" data-ia>📥 Importar p/ Mesa</button><button class="btn sec" data-comp>Complemento</button><button class="btn sec" data-rep>Reprovar</button><button class="gen" data-apr>✓ Aprovar</button>`;
     foot.querySelector("[data-pdf]").onclick=()=>imprimirDossie(s.nome,conteudo);
+    foot.querySelector("[data-ia]").onclick=()=>imprimirDossie(s.nome,conteudo,{ia:true,preHtml:rastreioIA});
     foot.querySelector("[data-comp]").onclick=async()=>{if(await markComplemento(s))ov.remove();};
     foot.querySelector("[data-rep]").onclick=async()=>{if(await markReprovado(s))ov.remove();};
     foot.querySelector("[data-apr]").onclick=async()=>{if(await markAprovado(s))ov.remove();};
@@ -1365,10 +1368,13 @@ async function verDossie(s){
 }
 function sinao(v){return v===true?"Sim":v===false?"Não":"—";}
 // PDF: abre janela de impressão (salvar como PDF) — sem CDN
-function imprimirDossie(nome,conteudoHtml){
+function imprimirDossie(nome,conteudoHtml,opts){
+  opts=opts||{};
+  const tituloDoc=opts.ia?("Relatorio Mesa - "+nome):("Dossie - "+nome);
+  const tituloH1=opts.ia?("Dossiê de campo — "+nome):("Dossie - "+nome);
   const w=window.open("","_blank");
   if(!w){alert("Permita pop-ups para gerar o PDF.");return;}
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Dossie - ${esc(nome)}</title><style>
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(tituloDoc)}</title><style>
     body{font-family:Arial,Helvetica,sans-serif;color:#111;padding:22px;max-width:760px;margin:0 auto}
     h1{font-size:20px;margin:0 0 12px}
     .dosssec{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#444;border-top:2px solid #222;padding-top:8px;margin:16px 0 6px}
@@ -1381,7 +1387,7 @@ function imprimirDossie(nome,conteudoHtml){
     .dossdoc{display:inline-block;padding:6px 10px;border:1px solid #888;border-radius:6px;font-size:12px;color:#111;text-decoration:none;margin:2px}
     .hint{color:#888;font-size:12px}
     @page{margin:14mm}
-  </style></head><body><h1>Dossie - ${esc(nome)}</h1>${conteudoHtml}<p class="hint">Gerado ${new Date().toLocaleString("pt-BR")}</p></body></html>`);
+  </style></head><body><h1>${esc(tituloH1)}</h1>${opts.preHtml||""}${conteudoHtml}<p class="hint">Gerado ${new Date().toLocaleString("pt-BR")}</p></body></html>`);
   w.document.close();
   const go=()=>{try{w.focus();w.print();}catch(e){}};
   const imgs=w.document.images;let pend=imgs.length;

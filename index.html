@@ -236,8 +236,10 @@
   <div class="body">
     <div class="field"><label class="f">Nome da fábrica</label><input id="nf_nome"></div>
     <div class="field"><label class="f">Cidade</label><input id="nf_cidade" placeholder="Ex.: Shenzhen"></div>
-    <div class="field"><label class="f">Produto-alvo (observação)</label>
-      <select id="nf_alvo"></select></div>
+    <div class="field"><label class="f">Produtos a validar</label>
+      <div style="display:flex;gap:6px"><select id="nf_alvo" style="flex:1"></select><button class="chip" id="nf_alvo_add" style="flex:0 0 auto">+ add</button></div>
+      <div id="nf_alvos" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+      <div class="hint" style="text-align:left;margin-top:4px">Adicione um ou vários. Todos vão para o agente validar.</div></div>
     <p class="hint" style="text-align:left">Se você for o agente sugerindo um novo, ele entra marcado como sugestão e vai pro crivo da Selecta.</p>
   </div>
   <div class="sheetfoot">
@@ -266,7 +268,7 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.21
+   AGENTE CHINA — App de campo · Selecta Solution · v2.22
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
@@ -285,6 +287,7 @@
    v2.19: (1) CORREÇÃO do erro 403 no upload — o upload deixou de usar 'x-upsert' (sobrescrever), que exige permissão de UPDATE que o agente, por desenho, não tem (storage do agente é INSERT-only). Como cada arquivo vai para um caminho único, gravação simples basta. O banco não mudou. (2) Botão "×" visível em cada anexo para remover/refazer (antes só dava tocando, sem dica visível no celular). (3) Removida a frase "Aceita PDF, Excel, Word, imagem…" do bloco de documentação.
    v2.20: (1) EXCLUSÃO PROPAGA — a sincronização agora REMOVE da lista local o fornecedor que foi apagado no servidor (antes só adicionava/atualizava, nunca removia; por isso um excluído "continuava aparecendo"). Coleta local ainda não enviada é preservada. (2) Lixeira 🗑 direto no card de cada fornecedor (só Selecta) — exclui no servidor e localmente, em qualquer estado, sem precisar abrir nada nem rodar SQL. Excluiu na Selecta → some em todos os aparelhos na próxima sincronização.
    v2.21: (1) Dois relatórios no dossiê (só Selecta — o Bruno nunca vê): "📄 Ver relatório" (PDF de apresentação, uso da Selecta) e "📥 Importar p/ Mesa" (PDF denso com cabeçalho de rastreio: ID de origem, datas, cadastrado por — para colar na conversa da Mesa de Análise). Ambos via Imprimir → Salvar como PDF (sem biblioteca externa, mantém o app leve). A ponte Mesa → Import OS fica para etapa futura.
+   v2.22: cadastro de fornecedor passa a aceitar MÚLTIPLOS produtos (antes só um). No modal de cadastro você adiciona vários produtos (chips com "+ add"); todos sobem para o servidor e o agente recebe cada um para validar. O botão "+ Adicionar produto" agora fica visível na própria lista de produtos do fornecedor (antes ficava escondido dentro do bloco da empresa). Adicionar/remover produto pela Selecta propaga para o aparelho do agente na sincronização. A lista de produtos viaja no mesmo campo observacao_alvo (CSV de tipos), sem mudança de banco — o "alvo" segue sendo o produto principal (primeiro da lista).
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -508,9 +511,15 @@ function itemDone(i){return Object.values(i.blocos).some(b=>b&&((b.media&&b.medi
 document.querySelectorAll(".aba").forEach(b=>b.addEventListener("click",()=>{abaAtual=b.dataset.aba;renderList();}));
 
 /* novo fornecedor */
-function fillAlvoSelect(){const sel=$("nf_alvo");sel.innerHTML='<option value="">— escolher produto-alvo —</option>'+
+function fillAlvoSelect(){const sel=$("nf_alvo");sel.innerHTML='<option value="">— escolher produto —</option>'+
   CAT.map(c=>`<option value="${c.cod}">${c.nome}</option>`).join("");}
-$("btnNew").onclick=()=>{fillAlvoSelect();$("mNew").classList.add("show");};
+let nfAlvos=[];
+function renderNfAlvos(){const box=$("nf_alvos");if(!box)return;box.innerHTML="";
+  nfAlvos.forEach((cod,i)=>{const c=catBy(cod);const ch=document.createElement("span");ch.className="chip";ch.style.cssText="display:inline-flex;gap:6px;align-items:center";
+    ch.innerHTML=`${esc(c?c.nome:cod)} <b data-x style="cursor:pointer">✕</b>`;
+    ch.querySelector("[data-x]").onclick=()=>{nfAlvos.splice(i,1);renderNfAlvos();};box.appendChild(ch);});}
+$("btnNew").onclick=()=>{nfAlvos=[];fillAlvoSelect();renderNfAlvos();$("mNew").classList.add("show");};
+$("nf_alvo_add").onclick=()=>{const v=$("nf_alvo").value;if(!v)return;if(!nfAlvos.includes(v))nfAlvos.push(v);$("nf_alvo").value="";renderNfAlvos();};
 $("nf_cancel").onclick=()=>$("mNew").classList.remove("show");
 $("nf_save").onclick=async()=>{
   const nome=$("nf_nome").value.trim();if(!nome){alert("Informe o nome.");return;}
@@ -520,9 +529,12 @@ $("nf_save").onclick=async()=>{
   const jaVerificado=Object.values(state.suppliers).some(x=>normNome(x.nome)===alvoNorm&&(x.status==="recebido"||x.status==="validado"));
   if(jaVerificado){alert("Fornecedor já cadastrado, consultar base.");return;}
   const id="loc_"+Date.now();
+  const selNow=$("nf_alvo").value; if(selNow&&!nfAlvos.includes(selNow))nfAlvos.push(selNow);
+  const planejados=nfAlvos.slice();
   const s={id,serverId:null,nome,cidade:$("nf_cidade").value.trim(),origem:(state.session.email||"").includes("aimportshop")?"agente":"selecta",
-    alvo:$("nf_alvo").value||null,status:"nao_iniciado",visto:true,qual:{carater:"",exporta_brasil:null,homologado:null},forn:{},itens:[]};
+    alvo:planejados[0]||null,planejados:planejados,status:"nao_iniciado",visto:true,qual:{carater:"",exporta_brasil:null,homologado:null},forn:{},itens:[]};
   state.suppliers[id]=s;
+  ensurePlanejados(s);
   await saveState();$("mNew").classList.remove("show");
   ["nf_nome","nf_cidade"].forEach(i=>$(i).value="");renderList();
   pushFornecedor(s).then(()=>renderList());   // sobe na hora; se estiver offline, sobe ao reconectar
@@ -539,13 +551,25 @@ function openSup(id){current=state.suppliers[id];
   const del=$("btnExcluir");if(del){del.classList.toggle("hidden",isAgente());del.onclick=()=>excluirFornecedor(current);}
   renderFornBlocos();renderItens();show("vSup");refreshProg();}
 /* o produto-alvo nasce na lista de validação (primeiro, com selo "alvo"); os demais entram depois */
-function ensureAlvoItem(s){
-  if(!s.alvo)return;const c=catBy(s.alvo);if(!c)return;
+function ensurePlanejados(s){
   s.itens=s.itens||[];
-  if(!s.itens.some(i=>i.tipo===s.alvo)){
-    s.itens.unshift({vid:"it_alvo_"+Date.now(),tipo:c.cod,rotulo:c.nome,is_alvo:true,blocos:{}});
-    saveState();
-  }
+  const lista=(s.planejados&&s.planejados.length)?s.planejados:(s.alvo?[s.alvo]:[]);
+  let mudou=false;
+  lista.forEach((cod,idx)=>{const c=catBy(cod);if(!c)return;
+    if(!s.itens.some(i=>i.tipo===cod)){
+      s.itens.push({vid:"it_pl_"+cod+"_"+Date.now()+"_"+idx,tipo:c.cod,rotulo:c.nome,is_alvo:(cod===(s.alvo||lista[0])),blocos:{}});
+      mudou=true;
+    }});
+  if(s.itens.length&&!s.itens.some(i=>i.is_alvo)){s.itens[0].is_alvo=true;mudou=true;}
+  if(mudou)saveState();
+}
+function ensureAlvoItem(s){return ensurePlanejados(s);}
+async function sincronizarPlanejados(s){
+  if(isAgente()||!s.serverId||!navigator.onLine)return;
+  try{await ensureFreshToken();
+    const lista=((s.planejados&&s.planejados.length)?s.planejados:(s.alvo?[s.alvo]:[])).join(",");
+    await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor?id=eq.${s.serverId}`,"PATCH",{observacao_alvo:lista});
+  }catch(e){console.warn("sync de produtos adiado",e);}
 }
 $("btnBack").onclick=()=>{renderList();show("vList");};
 $("btnLogout").onclick=async()=>{
@@ -585,7 +609,6 @@ function renderBlocoBody(sec,b){
     if(!current.forn[c.k])current.forn[c.k]={status:"",note:"",media:[]};
     body.appendChild(c.tipo==="doc"?campoDocEl(c):campoFotoEl(c));
   });
-  if(b.outros) body.appendChild(outrosItensEl());
   if(b.certs)  body.appendChild(certsQuadroEl());
   const visiveis=camposDoBloco(b.cod).filter(c=>!c.dependeDe||current.qual[c.dependeDe]===true);
   sec.classList.toggle("done", visiveis.length>0 && visiveis.every(c=>campoDone(current,c)));
@@ -688,9 +711,12 @@ function renderItens(){
       if(wrap.classList.contains("opened"))buildItemSlots(slotsBox,it,c);};
     wrap.querySelector("[data-open]").onclick=open;
     const delb=wrap.querySelector("[data-del]");
-    if(delb)delb.onclick=async()=>{ if(await confirmar('Remover o produto "'+it.rotulo+'" da validação? A coleta dele será descartada.')){ current.itens.splice(i,1); await saveState(); renderItens(); refreshProg(); } };
+    if(delb)delb.onclick=async()=>{ if(await confirmar('Remover o produto "'+it.rotulo+'" da validação? A coleta dele será descartada.')){ current.itens.splice(i,1); if(!isAgente()&&current.planejados){current.planejados=current.planejados.filter(t=>t!==it.tipo);sincronizarPlanejados(current);} await saveState(); renderItens(); refreshProg(); } };
     el.appendChild(wrap);
   });
+  const add=document.createElement("button");add.className="chip";add.textContent="+ Adicionar produto";add.style.marginTop="2px";
+  add.onclick=()=>{renderItemPicker("");$("it_busca").value="";$("mItem").classList.add("show");};
+  el.appendChild(add);
 }
 function buildItemSlots(box,it,c){
   // foto ilustrativa do produto inteiro (modelos/{produto}.jpg, se existir)
@@ -902,8 +928,10 @@ function renderItemPicker(f){const el=$("it_lista");f=f.toLowerCase();el.innerHT
     const d=document.createElement("div");d.className="card supcard";
     d.innerHTML=`<div class="ci"><b>${c.nome}</b><span>${c.cat}${c.flag?' · '+c.flag:''}</span></div>`;
     d.onclick=()=>{
+      if((current.itens||[]).some(i=>i.tipo===c.cod)){$("mItem").classList.remove("show");return;}
       const vid="it_"+Date.now();
       current.itens.push({vid,tipo:c.cod,rotulo:c.nome,is_alvo:current.alvo===c.cod,blocos:{}});
+      if(!isAgente()){current.planejados=current.planejados||[];if(!current.planejados.includes(c.cod))current.planejados.push(c.cod);sincronizarPlanejados(current);}
       saveState();$("mItem").classList.remove("show");renderItens();refreshProg();};
     el.appendChild(d);});}
 
@@ -1062,7 +1090,7 @@ async function pushFornecedor(s){
   await ensureFreshToken();
   const novoId=uuid();
   try{
-    const r=await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor`,"POST",{id:novoId,nome:s.nome,cidade:s.cidade,origem:s.origem,observacao_alvo:s.alvo,status:s.status==="recebido"||s.status==="validado"?"nao_iniciado":(s.status||"nao_iniciado")});
+    const r=await authFetch(`${SUPA_URL}/rest/v1/agch_fornecedor`,"POST",{id:novoId,nome:s.nome,cidade:s.cidade,origem:s.origem,observacao_alvo:((s.planejados&&s.planejados.length)?s.planejados:(s.alvo?[s.alvo]:[])).join(","),status:s.status==="recebido"||s.status==="validado"?"nao_iniciado":(s.status||"nao_iniciado")});
     if(!r.ok)return null;
     s.serverId=novoId; await saveState(); return novoId;
   }catch(e){console.warn("cadastro adiado",e);return null;}
@@ -1084,12 +1112,15 @@ async function pullFornecedores(){
       if(s){
         if(s.status!==f.status){ if(f.status==="recebido"&&s.status!=="recebido")s.visto=false; s.status=f.status; changed=true; }
         if(s.instrucaoComplemento!==(f.instrucao_complemento||null)){ s.instrucaoComplemento=f.instrucao_complemento||null; changed=true; }
+        const listaPl=(f.observacao_alvo||"").split(",").map(x=>x.trim()).filter(Boolean);
+        if(JSON.stringify(listaPl)!==JSON.stringify(s.planejados||[])){ s.planejados=listaPl; if(!s.alvo)s.alvo=listaPl[0]||null; ensurePlanejados(s); changed=true; }
       }else{
         const lid="srv_"+f.id;
+        const listaPl=(f.observacao_alvo||"").split(",").map(x=>x.trim()).filter(Boolean);
         state.suppliers[lid]={id:lid,serverId:f.id,remote:true,nome:f.nome,cidade:f.cidade||"",origem:f.origem||"selecta",
-          alvo:f.observacao_alvo||null,instrucaoComplemento:f.instrucao_complemento||null,status:f.status||"nao_iniciado",visto:(f.status!=="recebido"),
+          alvo:listaPl[0]||null,planejados:listaPl,instrucaoComplemento:f.instrucao_complemento||null,status:f.status||"nao_iniciado",visto:(f.status!=="recebido"),
           qual:{carater:"",exporta_brasil:null,homologado:null},forn:{},itens:[]};
-        if(state.suppliers[lid].alvo)ensureAlvoItem(state.suppliers[lid]);
+        ensurePlanejados(state.suppliers[lid]);
         changed=true;
       }
     }

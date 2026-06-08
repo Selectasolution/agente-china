@@ -268,7 +268,7 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.24
+   AGENTE CHINA — App de campo · Selecta Solution · v2.25
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
@@ -290,6 +290,7 @@
    v2.22: cadastro de fornecedor passa a aceitar MÚLTIPLOS produtos (antes só um). No modal de cadastro você adiciona vários produtos (chips com "+ add"); todos sobem para o servidor e o agente recebe cada um para validar. O botão "+ Adicionar produto" agora fica visível na própria lista de produtos do fornecedor (antes ficava escondido dentro do bloco da empresa). Adicionar/remover produto pela Selecta propaga para o aparelho do agente na sincronização. A lista de produtos viaja no mesmo campo observacao_alvo (CSV de tipos), sem mudança de banco — o "alvo" segue sendo o produto principal (primeiro da lista).
    v2.23: adicionados ao catálogo os componentes internos que faltavam e que a Selecta importa — Memória RAM, Placa-mãe, Fonte de Alimentação (PSU) e Cooler/Ventoinha — sob a categoria "Componentes". Cada um com seus ângulos de foto (slots) para o agente validar em campo. (SSD e HD já existiam em "Armazenamento".)
    v2.24: orientações de captura dos componentes reescritas como instruções de ângulo para leigo (o que mirar, de que lado, o que precisa sair legível) — sem foto/ilustração embutida (mantém o app leve e offline; se o agente quiser referência visual, pesquisa por conta).
+   v2.25: removido botão duplicado de adicionar produto. A v2.22 tinha criado um "+ Adicionar produto" no fim da lista sem ver que já existia o "+ Validar um produto" no topo — dois botões pra mesma ação. Agora há um só (o do topo). O app não cria produto sozinho: item só entra por cadastro, pelo botão de adicionar, ou pela sincronização do que a Selecta definiu.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -724,9 +725,6 @@ function renderItens(){
     if(delb)delb.onclick=async()=>{ if(await confirmar('Remover o produto "'+it.rotulo+'" da validação? A coleta dele será descartada.')){ current.itens.splice(i,1); if(!isAgente()&&current.planejados){current.planejados=current.planejados.filter(t=>t!==it.tipo);sincronizarPlanejados(current);} await saveState(); renderItens(); refreshProg(); } };
     el.appendChild(wrap);
   });
-  const add=document.createElement("button");add.className="chip";add.textContent="+ Adicionar produto";add.style.marginTop="2px";
-  add.onclick=()=>{renderItemPicker("");$("it_busca").value="";$("mItem").classList.add("show");};
-  el.appendChild(add);
 }
 function buildItemSlots(box,it,c){
   // foto ilustrativa do produto inteiro (modelos/{produto}.jpg, se existir)

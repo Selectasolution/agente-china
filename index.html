@@ -268,7 +268,7 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.22
+   AGENTE CHINA — App de campo · Selecta Solution · v2.24
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
@@ -288,6 +288,8 @@
    v2.20: (1) EXCLUSÃO PROPAGA — a sincronização agora REMOVE da lista local o fornecedor que foi apagado no servidor (antes só adicionava/atualizava, nunca removia; por isso um excluído "continuava aparecendo"). Coleta local ainda não enviada é preservada. (2) Lixeira 🗑 direto no card de cada fornecedor (só Selecta) — exclui no servidor e localmente, em qualquer estado, sem precisar abrir nada nem rodar SQL. Excluiu na Selecta → some em todos os aparelhos na próxima sincronização.
    v2.21: (1) Dois relatórios no dossiê (só Selecta — o Bruno nunca vê): "📄 Ver relatório" (PDF de apresentação, uso da Selecta) e "📥 Importar p/ Mesa" (PDF denso com cabeçalho de rastreio: ID de origem, datas, cadastrado por — para colar na conversa da Mesa de Análise). Ambos via Imprimir → Salvar como PDF (sem biblioteca externa, mantém o app leve). A ponte Mesa → Import OS fica para etapa futura.
    v2.22: cadastro de fornecedor passa a aceitar MÚLTIPLOS produtos (antes só um). No modal de cadastro você adiciona vários produtos (chips com "+ add"); todos sobem para o servidor e o agente recebe cada um para validar. O botão "+ Adicionar produto" agora fica visível na própria lista de produtos do fornecedor (antes ficava escondido dentro do bloco da empresa). Adicionar/remover produto pela Selecta propaga para o aparelho do agente na sincronização. A lista de produtos viaja no mesmo campo observacao_alvo (CSV de tipos), sem mudança de banco — o "alvo" segue sendo o produto principal (primeiro da lista).
+   v2.23: adicionados ao catálogo os componentes internos que faltavam e que a Selecta importa — Memória RAM, Placa-mãe, Fonte de Alimentação (PSU) e Cooler/Ventoinha — sob a categoria "Componentes". Cada um com seus ângulos de foto (slots) para o agente validar em campo. (SSD e HD já existiam em "Armazenamento".)
+   v2.24: orientações de captura dos componentes reescritas como instruções de ângulo para leigo (o que mirar, de que lado, o que precisa sair legível) — sem foto/ilustração embutida (mantém o app leve e offline; se o agente quiser referência visual, pesquisa por conta).
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -386,7 +388,15 @@ const CAT = [
  {cod:"nvr",nome:"NVR",cat:"CFTV",spec:"Canais IP, PoE",
    slots:[S("placa","Processador + placa + baias de HD",1),S("portas","Canais IP, PoE, portas de rede",0)]},
  {cod:"camera_ip",nome:"Câmera IP",cat:"CFTV",flag:"⚠ ANATEL se Wi-Fi",spec:"MP real, IP rating",
-   slots:[S("sensor","Sensor + lente + LEDs IR + teste de imagem",1),S("conect","Resolução, PoE/Wi-Fi, grau IP",0)]}
+   slots:[S("sensor","Sensor + lente + LEDs IR + teste de imagem",1),S("conect","Resolução, PoE/Wi-Fi, grau IP",0)]},
+ {cod:"ram",nome:"Memória RAM",cat:"Componentes",spec:"DDR3/DDR4/DDR5; capacidade; velocidade (MHz)",
+   slots:[S("chips","Foto reta da face, peça toda nítida — dá pra ler marca e lote nos chips",1),S("etq","Aproxime na etiqueta até ler: capacidade, velocidade e modelo",0),S("form","Borda do conector dourado: mostre os contatos e o entalhe (notch)",0)]},
+ {cod:"placa_mae",nome:"Placa-mãe",cat:"Componentes",spec:"Socket, chipset, formato (ATX/mATX/ITX)",
+   slots:[S("pcb","Foto de cima da placa inteira, reta: socket, chipset e capacitores nítidos",1),S("etq","Aproxime no nome/serial impresso na placa até ficar legível",0),S("conect","Slots de RAM/M.2 e o painel de portas de trás (USB/vídeo/rede)",0)]},
+ {cod:"fonte",nome:"Fonte de Alimentação (PSU)",cat:"Componentes",flag:"⚠ INMETRO",spec:"Watts reais, certificação 80 Plus, PFC",
+   slots:[S("etq","Aproxime na etiqueta lateral: potência (W), tensões e selo 80+/INMETRO",1),S("cabos","Espalhe e mostre todos os cabos/conectores (24p, CPU, PCIe, SATA)",0),S("interno","Topo com o ventilador; se abrir, mostre capacitores e dissipador",0)]},
+ {cod:"cooler",nome:"Cooler / Ventoinha",cat:"Componentes",spec:"Air ou water; socket compatível; RPM",
+   slots:[S("conj","Conjunto inteiro de lado: aletas, heatpipes e o ventilador",1),S("base","Vire a base de contato pra cima (parte que toca o processador) + socket",0)]}
 ];
 const catBy = c => CAT.find(x=>x.cod===c);
 

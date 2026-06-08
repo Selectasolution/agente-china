@@ -268,7 +268,7 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.26
+   AGENTE CHINA — App de campo · Selecta Solution · v2.27
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
@@ -291,6 +291,7 @@
    v2.23: adicionados ao catálogo os componentes internos que faltavam e que a Selecta importa — Memória RAM, Placa-mãe, Fonte de Alimentação (PSU) e Cooler/Ventoinha — sob a categoria "Componentes". Cada um com seus ângulos de foto (slots) para o agente validar em campo. (SSD e HD já existiam em "Armazenamento".)
    v2.24: orientações de captura dos componentes reescritas como instruções de ângulo para leigo (o que mirar, de que lado, o que precisa sair legível) — sem foto/ilustração embutida (mantém o app leve e offline; se o agente quiser referência visual, pesquisa por conta).
    v2.25: removido botão duplicado de adicionar produto. A v2.22 tinha criado um "+ Adicionar produto" no fim da lista sem ver que já existia o "+ Validar um produto" no topo — dois botões pra mesma ação. Agora há um só (o do topo). O app não cria produto sozinho: item só entra por cadastro, pelo botão de adicionar, ou pela sincronização do que a Selecta definiu.
+   v2.27: removido o campo "foto ilustrativa" que aparecia para o agente em cada produto (placeholder que tentava puxar modelos/*.jpg). O botão de cada ângulo deixou de ser "ver modelo" (imagem) e virou "como fotografar": abre a orientação de captura em texto — o que a foto precisa mostrar e as regras pra ela valer (nítida, de perto, etiqueta legível). Sem dependência de arquivo de imagem; o app não busca mais nenhuma foto-modelo.
    v2.26: o ✕ de excluir produto passa a respeitar a hierarquia. Produto cadastrado pela Selecta NÃO mostra ✕ no aparelho do agente — o Bruno não apaga o que a Selecta definiu. O ✕ só aparece para o agente nos produtos que ele mesmo adicionou em campo. Para a Selecta, o ✕ continua em todos os produtos que não são o alvo. Cada item passa a guardar sua origem (selecta/agente); itens antigos sem origem são tratados como da Selecta (o agente não os remove).
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
@@ -332,7 +333,7 @@ const campoBy   = k   => CAMPOS_FORN.find(c=>c.k===k);
 const camposDoBloco = cod => CAMPOS_FORN.filter(c=>c.bloco===cod);
 
 /* ---------- catálogo dos 28 produtos com slots (★ crítico / ○ padrão) ---------- */
-/* Derivado do mapa de validação técnica. spec = referência curta; ref = foto ilustrativa (Selecta pluga). */
+/* Derivado do mapa de validação técnica. spec = referência curta. slots = ângulos de foto; cada label é a orientação de captura (botão "como fotografar"). Sem foto-modelo embutida. */
 const S=(cod,label,crit)=>({cod,label,crit:!!crit});
 const CAT = [
  {cod:"notebook",nome:"Notebook",cat:"Computadores",flag:"⚠ bateria/aéreo",spec:"CPU/RAM/SSD conforme edital; bateria",
@@ -729,14 +730,7 @@ function renderItens(){
   });
 }
 function buildItemSlots(box,it,c){
-  // foto ilustrativa do produto inteiro (modelos/{produto}.jpg, se existir)
-  const ref=document.createElement("div");ref.className="ref";
-  ref.innerHTML=`<div class="ph" data-ph><span>foto<br>ilustrativa</span></div><div class="rt"><span class="reftag">foto ilustrativa</span><br><b>${esc(c.nome)}</b><br>${esc(c.spec||"")}</div>`;
-  const ph=ref.querySelector("[data-ph]");
-  const img=new Image();img.src=`modelos/${c.cod}.jpg`;
-  img.onload=()=>{ph.innerHTML="";ph.style.backgroundImage=`url(${img.src})`;ph.classList.add("hasimg");ph.style.cursor="pointer";ph.onclick=()=>showModelo(img.src,c.nome);};
-  box.appendChild(ref);
-  // slots (cada ângulo) com foto-modelo clicável
+  // slots (cada ângulo) — a orientação de captura está no botão "como fotografar"
   c.slots.forEach(sl=>{
     if(!it.blocos[sl.cod])it.blocos[sl.cod]={status:"",note:"",media:[]};
     box.appendChild(slotEl(sl,it.blocos[sl.cod],it,c));
@@ -783,8 +777,26 @@ function showModelo(url,titulo){
   const imgbox=ov.querySelector("[data-img]");
   const img=new Image();
   img.onload=()=>{imgbox.innerHTML="";img.style.maxWidth="100%";img.style.borderRadius="8px";imgbox.appendChild(img);};
-  img.onerror=()=>{imgbox.innerHTML='<div style="padding:26px;color:var(--muted);text-align:center">(modelo a definir)<br><span style="font-size:12px">imagem ainda não cadastrada para este ângulo</span></div>';};
+  img.onerror=()=>{imgbox.innerHTML='<div style="padding:26px;color:var(--muted);text-align:center">não foi possível abrir a imagem</div>';};
   img.src=url;
+  ov.onclick=e=>{if(e.target===ov)ov.remove();};
+  document.body.appendChild(ov);
+}
+/* orientação de captura do ângulo (texto) — explica COMO a Selecta quer a foto */
+function showGuiaFoto(sl,c){
+  const ov=document.createElement("div");ov.className="modelov";
+  ov.innerHTML=`<div class="modelobox">
+    <div class="modeloh">Como fotografar${c?` — ${esc(c.nome)}`:""}</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:4px">O que esta foto precisa mostrar${sl.crit?" (obrigatória)":""}:</div>
+    <div style="font-size:15px;font-weight:600;line-height:1.45;margin-bottom:14px">${sl.crit?'★ ':''}${esc(sl.label)}</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Para a foto valer:</div>
+    <ul style="margin:0;padding-left:18px;font-size:13.5px;line-height:1.6">
+      <li>Nítida e bem iluminada — sem tremer, sem sombra por cima</li>
+      <li>De perto, enquadrando só o item</li>
+      <li>Qualquer texto/etiqueta precisa estar legível</li>
+      <li>Evite reflexo e fundo bagunçado</li>
+    </ul>
+    <div class="hint" style="text-align:center;margin-top:14px">toque fora pra fechar</div></div>`;
   ov.onclick=e=>{if(e.target===ov)ov.remove();};
   document.body.appendChild(ov);
 }
@@ -841,8 +853,8 @@ function blocoEl(num,titulo,badge,ask,zh,cap,slots,stRef,scope,statusObj){
 /* elemento de slot de produto */
 function slotEl(sl,st,it,c){
   const div=document.createElement("div");div.className="slot";
-  div.innerHTML=`<div class="slotlabel">${sl.crit?'<span class="star">★</span>':'○'} ${sl.label} <button class="vermodelo" data-vm>ver modelo</button></div>`;
-  div.querySelector("[data-vm]").onclick=()=>showModelo(`modelos/${c.cod}_${sl.cod}.jpg`, sl.label);
+  div.innerHTML=`<div class="slotlabel">${sl.crit?'<span class="star">★</span>':'○'} ${sl.label} <button class="vermodelo" data-vm>como fotografar</button></div>`;
+  div.querySelector("[data-vm]").onclick=()=>showGuiaFoto(sl,c);
   div.appendChild(captureUI(st,sl.label,sl.crit));
   const note=document.createElement("textarea");note.className="note";note.placeholder="Registre algum achado importante…";note.value=st.note||"";
   note.oninput=()=>{st.note=note.value;saveState();refreshProg();};div.appendChild(note);

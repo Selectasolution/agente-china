@@ -268,7 +268,7 @@
 
 <script>
 /* =====================================================================
-   AGENTE CHINA — App de campo · Selecta Solution · v2.25
+   AGENTE CHINA — App de campo · Selecta Solution · v2.26
    Offline-first. Sem CDN nem bibliotecas externas (robusto contra o Firewall).
    Fala com o Supabase por fetch direto (auth + REST + storage).
    Bruno coleta evidência; veredicto e critério NÃO existem aqui.
@@ -291,6 +291,7 @@
    v2.23: adicionados ao catálogo os componentes internos que faltavam e que a Selecta importa — Memória RAM, Placa-mãe, Fonte de Alimentação (PSU) e Cooler/Ventoinha — sob a categoria "Componentes". Cada um com seus ângulos de foto (slots) para o agente validar em campo. (SSD e HD já existiam em "Armazenamento".)
    v2.24: orientações de captura dos componentes reescritas como instruções de ângulo para leigo (o que mirar, de que lado, o que precisa sair legível) — sem foto/ilustração embutida (mantém o app leve e offline; se o agente quiser referência visual, pesquisa por conta).
    v2.25: removido botão duplicado de adicionar produto. A v2.22 tinha criado um "+ Adicionar produto" no fim da lista sem ver que já existia o "+ Validar um produto" no topo — dois botões pra mesma ação. Agora há um só (o do topo). O app não cria produto sozinho: item só entra por cadastro, pelo botão de adicionar, ou pela sincronização do que a Selecta definiu.
+   v2.26: o ✕ de excluir produto passa a respeitar a hierarquia. Produto cadastrado pela Selecta NÃO mostra ✕ no aparelho do agente — o Bruno não apaga o que a Selecta definiu. O ✕ só aparece para o agente nos produtos que ele mesmo adicionou em campo. Para a Selecta, o ✕ continua em todos os produtos que não são o alvo. Cada item passa a guardar sua origem (selecta/agente); itens antigos sem origem são tratados como da Selecta (o agente não os remove).
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -568,7 +569,7 @@ function ensurePlanejados(s){
   let mudou=false;
   lista.forEach((cod,idx)=>{const c=catBy(cod);if(!c)return;
     if(!s.itens.some(i=>i.tipo===cod)){
-      s.itens.push({vid:"it_pl_"+cod+"_"+Date.now()+"_"+idx,tipo:c.cod,rotulo:c.nome,is_alvo:(cod===(s.alvo||lista[0])),blocos:{}});
+      s.itens.push({vid:"it_pl_"+cod+"_"+Date.now()+"_"+idx,tipo:c.cod,rotulo:c.nome,is_alvo:(cod===(s.alvo||lista[0])),dono:"selecta",blocos:{}});
       mudou=true;
     }});
   if(s.itens.length&&!s.itens.some(i=>i.is_alvo)){s.itens[0].is_alvo=true;mudou=true;}
@@ -711,10 +712,11 @@ function renderItens(){
   const el=$("itensVal");el.innerHTML="";
   (current.itens||[]).forEach((it,i)=>{
     const c=catBy(it.tipo);
+    const podeRemover = !it.is_alvo && (!isAgente() || it.dono==="agente");
     const wrap=document.createElement("div");wrap.className="card";
     wrap.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
       <b>${esc(it.rotulo)}${it.is_alvo?' <span class="badge">alvo</span>':''}</b>
-      <div style="display:flex;gap:6px;flex:0 0 auto">${it.is_alvo?'':'<button class="delitem" data-del title="remover produto">✕</button>'}<button class="backbtn" data-open>${itemDone(it)?'continuar':'validar'}</button></div></div>
+      <div style="display:flex;gap:6px;flex:0 0 auto">${podeRemover?'<button class="delitem" data-del title="remover produto">✕</button>':''}<button class="backbtn" data-open>${itemDone(it)?'continuar':'validar'}</button></div></div>
       <div style="font-size:12px;color:var(--muted);margin-top:3px">${c?c.spec:''}${c&&c.flag?' · '+c.flag:''}</div>
       <div data-slots style="margin-top:8px"></div>`;
     const slotsBox=wrap.querySelector("[data-slots]");
@@ -938,7 +940,7 @@ function renderItemPicker(f){const el=$("it_lista");f=f.toLowerCase();el.innerHT
     d.onclick=()=>{
       if((current.itens||[]).some(i=>i.tipo===c.cod)){$("mItem").classList.remove("show");return;}
       const vid="it_"+Date.now();
-      current.itens.push({vid,tipo:c.cod,rotulo:c.nome,is_alvo:current.alvo===c.cod,blocos:{}});
+      current.itens.push({vid,tipo:c.cod,rotulo:c.nome,is_alvo:current.alvo===c.cod,dono:isAgente()?"agente":"selecta",blocos:{}});
       if(!isAgente()){current.planejados=current.planejados||[];if(!current.planejados.includes(c.cod))current.planejados.push(c.cod);sincronizarPlanejados(current);}
       saveState();$("mItem").classList.remove("show");renderItens();refreshProg();};
     el.appendChild(d);});}

@@ -293,6 +293,7 @@
    v2.25: removido botão duplicado de adicionar produto. A v2.22 tinha criado um "+ Adicionar produto" no fim da lista sem ver que já existia o "+ Validar um produto" no topo — dois botões pra mesma ação. Agora há um só (o do topo). O app não cria produto sozinho: item só entra por cadastro, pelo botão de adicionar, ou pela sincronização do que a Selecta definiu.
    v2.27: removido o campo "foto ilustrativa" que aparecia para o agente em cada produto (placeholder que tentava puxar modelos/*.jpg). O botão de cada ângulo deixou de ser "ver modelo" (imagem) e virou "como fotografar": abre a orientação de captura em texto — o que a foto precisa mostrar e as regras pra ela valer (nítida, de perto, etiqueta legível). Sem dependência de arquivo de imagem; o app não busca mais nenhuma foto-modelo.
    v2.26: o ✕ de excluir produto passa a respeitar a hierarquia. Produto cadastrado pela Selecta NÃO mostra ✕ no aparelho do agente — o Bruno não apaga o que a Selecta definiu. O ✕ só aparece para o agente nos produtos que ele mesmo adicionou em campo. Para a Selecta, o ✕ continua em todos os produtos que não são o alvo. Cada item passa a guardar sua origem (selecta/agente); itens antigos sem origem são tratados como da Selecta (o agente não os remove).
+   v2.28: AUDITORIA PRÉ-CAMPO — camada de mídia local blindada. (1) mediaSet deixou de ser "fire-and-forget": agora REJEITA em erro/abort (quota cheia, transação cancelada) e a captura SÓ registra a foto depois que a gravação no IndexedDB realmente fecha. Se falhar, o app avisa e NÃO adiciona a foto à lista — informação incompleta não vira evidência (o Bruno refaz na hora, com o produto à frente). (2) Aviso preventivo de espaço: após cada captura, mede o armazenamento (navigator.storage.estimate) e avisa quando passar de 80% de uso OU restar menos de 50MB, antes que a próxima foto se perca. (3) persist() passou a aguardar e verificar o retorno (antes era ignorado). De quebra: id de mídia agora usa uuid() (sem colisão de rajada que sobrescreveria foto). Service Worker (offline-first real) fica para a próxima versão, junto com a decisão de domínio.
    ===================================================================== */
 const SUPA_URL = "https://tsbsdztlovzzfnrwvyfd.supabase.co";
 const SUPA_KEY = "sb_publishable_TLrqRYBjD20duYJFayZSDA_bZs0Nig2";
@@ -416,8 +417,41 @@ function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open("agch_db
   r.onsuccess=e=>{idb=e.target.result;res();};r.onerror=()=>rej(r.error);});}
 function kvGet(k){return new Promise(r=>{const t=idb.transaction("kv").objectStore("kv").get(k);t.onsuccess=()=>r(t.result||null);t.onerror=()=>r(null);});}
 function kvSet(k,v){return new Promise(r=>{const t=idb.transaction("kv","readwrite").objectStore("kv").put(v,k);t.onsuccess=()=>r(true);t.onerror=()=>r(false);});}
-function mediaSet(id,blob){return new Promise(r=>{const t=idb.transaction("media","readwrite").objectStore("media").put(blob,id);t.onsuccess=()=>r(true);t.onerror=()=>r(false);});}
+// mediaSet HONESTO: rejeita (não resolve "false" silencioso) se a gravação falhar — quota, abort, etc.
+// Quem chama PRECISA tratar a falha e NÃO registrar a foto como evidência (achado 1).
+function mediaSet(id,blob){return new Promise((res,rej)=>{
+  let tx;try{tx=idb.transaction("media","readwrite");}catch(e){return rej(e);}
+  const req=tx.objectStore("media").put(blob,id);
+  req.onerror=()=>rej(req.error||new Error("falha ao gravar mídia"));
+  tx.onabort=()=>rej(tx.error||new Error("gravação de mídia abortada (provável armazenamento cheio)"));
+  tx.oncomplete=()=>res(true);   // só confirma quando a transação fecha de fato
+});}
 function mediaGet(id){return new Promise(r=>{const t=idb.transaction("media").objectStore("media").get(id);t.onsuccess=()=>r(t.result||null);t.onerror=()=>r(null);});}
+// === Achado 2: medição de espaço para aviso preventivo ===
+// Retorna {pctUsado, freeMB, low} ou null se o navegador não expõe estimate().
+async function storageInfo(){
+  try{
+    if(!navigator.storage||!navigator.storage.estimate)return null;
+    const e=await navigator.storage.estimate();
+    if(!e||!e.quota)return null;
+    const usage=e.usage||0, quota=e.quota;
+    const freeMB=(quota-usage)/1048576;
+    const pctUsado=usage/quota;
+    // Bruno: ~2 fornecedores × ~20 fotos/dia, podendo acumular dias sem rede no Firewall.
+    // Avisa se passar de 80% OU se restar menos de 50MB (o que vier primeiro).
+    const low=(pctUsado>=0.80)||(freeMB<50);
+    return {pctUsado,freeMB,low,usage,quota};
+  }catch(e){return null;}
+}
+// Aviso preventivo, não-bloqueante: chamado após cada captura bem-sucedida.
+let _avisouQuota=false;
+async function checarEspaco(box){
+  const info=await storageInfo();
+  if(!info||!info.low){_avisouQuota=false;return;}
+  if(_avisouQuota)return;            // não repete o alerta a cada foto
+  _avisouQuota=true;
+  alert("⚠ Espaço do aparelho ficando baixo (~"+Math.max(0,Math.round(info.freeMB))+" MB livres).\n\nAntes de continuar fotografando, conecte à internet e envie os relatórios já prontos para liberar espaço. Fotos não enviadas ficam só neste aparelho.");
+}
 
 /* =========================== estado =========================== */
 const STATE_V=3; // bump = limpa fornecedores locais de versão antiga (a estrutura mudou). v3: base zerada para operação real.
@@ -884,22 +918,41 @@ function captureUI(st,label,crit,isDoc){
   drawThumbs(box,st);
   return box;
 }
-function handleFiles(files,st,box,crit,isDoc){
-  [...files].forEach(f=>{
+async function handleFiles(files,st,box,crit,isDoc){
+  for(const f of [...files]){
     const isImg=f.type.startsWith("image");
     if(isImg && !isDoc){
-      processImage(f,crit,(blob,meta)=>{
-        const id="m_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
-        mediaSet(id,blob);st.media.push({id,name:f.name,type:"image",valid:meta.ok,reason:meta.reason,metric:meta.metric,w:meta.w,h:meta.h});
-        saveState();drawThumbs(box,st);showQ(box,meta);refreshProg();
+      // processImage continua por callback; envolvo numa Promise para poder AGUARDAR a gravação
+      await new Promise(resolve=>{
+        processImage(f,crit,async(blob,meta)=>{
+          const id="m_"+uuid();   // achado 6 de quebra: id sem colisão de rajada
+          try{
+            await mediaSet(id,blob);                 // ESPERA a gravação real
+            st.media.push({id,name:f.name,type:"image",valid:meta.ok,reason:meta.reason,metric:meta.metric,w:meta.w,h:meta.h});
+            await saveState();drawThumbs(box,st);showQ(box,meta);refreshProg();
+            await checarEspaco(box);                 // aviso preventivo de espaço
+          }catch(err){
+            // OPÇÃO (a): foto que não gravou NÃO existe. Não registra. Manda refazer.
+            console.warn("falha ao gravar foto:",err);
+            alert("⚠ Não consegui salvar esta foto no aparelho"+((""+err).match(/cheio|quota|abort/i)?" (armazenamento cheio)":"")+".\n\nA foto NÃO foi guardada. Refaça a foto. Se persistir, conecte e envie os relatórios prontos para liberar espaço.");
+          }
+          resolve();
+        });
       });
     }else{
-      const id="m_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
+      const id="m_"+uuid();
       const tp=isImg?"image":(f.type.includes("pdf")?"pdf":(f.type.includes("video")?"video":"documento"));
-      mediaSet(id,f);st.media.push({id,name:f.name,type:tp,valid:true,reason:"anexo"});
-      saveState();drawThumbs(box,st);refreshProg();
+      try{
+        await mediaSet(id,f);                        // ESPERA a gravação real
+        st.media.push({id,name:f.name,type:tp,valid:true,reason:"anexo"});
+        await saveState();drawThumbs(box,st);refreshProg();
+        await checarEspaco(box);
+      }catch(err){
+        console.warn("falha ao gravar anexo:",err);
+        alert("⚠ Não consegui salvar o anexo \""+(f.name||"arquivo")+"\""+((""+err).match(/cheio|quota|abort/i)?" (armazenamento cheio)":"")+".\n\nO anexo NÃO foi guardado. Tente de novo. Se persistir, conecte e envie os relatórios prontos para liberar espaço.");
+      }
     }
-  });
+  }
 }
 function processImage(file,crit,cb){
   const img=new Image();const url=URL.createObjectURL(file);
@@ -1531,7 +1584,14 @@ $("li_btn").onclick=async()=>{
 };
 (async function(){
   await openDB();await loadState();syncBadge();
-  try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
+  // persistência de armazenamento: pede e VERIFICA (antes o retorno era ignorado).
+  // Se o navegador negar, o IndexedDB pode ser evictado sob pressão — o aviso de espaço (checarEspaco) cobre o resto.
+  try{
+    if(navigator.storage&&navigator.storage.persist){
+      const granted=await navigator.storage.persist();
+      if(!granted)console.warn("Armazenamento persistente NÃO concedido pelo navegador. Risco de limpeza sob pressão de memória.");
+    }
+  }catch(e){}
   if(state.session&&state.session.token){token=state.session.token;aplicarUsuario();renderList();show("vList");if(navigator.onLine){flushQueue();flushComplementos();pullFornecedores();}startPolling();}
   else show("vLogin");
 })();
